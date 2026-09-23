@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from app import attachments, config, main, ocr, openai_media, recognition
+from app import attachments, config, main, openai_media, recognition
 from tests.fixtures.make_fixtures import make_all
 
 
@@ -18,7 +18,6 @@ from tests.fixtures.make_fixtures import make_all
 def local_data(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr(config, "ATTACHMENT_DB_PATH", tmp_path / "attachments.sqlite3")
-    monkeypatch.setenv("MEDIA_AI_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "test-only")
 
 
@@ -62,20 +61,14 @@ async def test_transcription_uses_gpt_transcribe_and_normalizes_extension(monkey
 
 
 @pytest.mark.asyncio
-async def test_cache_is_separate_for_openai_and_nitec(monkeypatch):
+async def test_cache_is_separate_for_ocr_models(monkeypatch):
     calls = []
 
-    async def openai_ocr(*_):
-        calls.append("openai")
+    async def openai_ocr(_data, _base, _key, model):
+        calls.append(model)
         return "027228 | 2"
 
-    async def nitec_ocr(*_):
-        calls.append("nitec")
-        return [{"text": "027228", "box": [1, 2, 3, 4]}]
-
     monkeypatch.setattr(openai_media, "ocr_image", openai_ocr)
-    monkeypatch.setattr(ocr, "ocr_image", nitec_ocr)
-    monkeypatch.setenv("NITEC_API_KEY", "test-only")
     image = Image.new("RGB", (25, 25), "white")
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
@@ -83,11 +76,11 @@ async def test_cache_is_separate_for_openai_and_nitec(monkeypatch):
 
     first = await attachments.save_and_parse("photo.png", raw, "image/png")
     repeat = await attachments.save_and_parse("photo.png", raw, "image/png")
-    monkeypatch.setenv("MEDIA_AI_PROVIDER", "nitec")
+    monkeypatch.setenv("OPENAI_OCR_MODEL", "another-ocr-model")
     other = await attachments.save_and_parse("photo.png", raw, "image/png")
-    assert first.text == repeat.text == "027228 | 2"
-    assert first.boxes == [] and other.boxes[0]["text"] == "027228"
-    assert calls == ["openai", "nitec"]
+    assert first.text == repeat.text == other.text == "027228 | 2"
+    assert first.boxes == repeat.boxes == other.boxes == []
+    assert calls == ["gpt-5.6-luna", "another-ocr-model"]
     with sqlite3.connect(config.ATTACHMENT_DB_PATH) as db:
         assert db.execute("SELECT count(*) FROM parsed_files_v2").fetchone()[0] == 2
 

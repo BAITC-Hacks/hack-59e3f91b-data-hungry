@@ -7,10 +7,15 @@ from pathlib import Path
 
 import httpx
 
-from .transcription import _CONTENT_TYPES
-
 OCR_MODEL = "gpt-5.6-luna"
 ASR_MODEL = "gpt-transcribe"
+AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".webm", ".mp4", ".mpeg", ".mpga", ".oga", ".weba"}
+_CONTENT_TYPES = {
+    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/m4a",
+    ".ogg": "audio/ogg", ".oga": "audio/ogg", ".flac": "audio/flac",
+    ".webm": "audio/webm", ".weba": "audio/webm", ".mp4": "audio/mp4",
+    ".mpeg": "audio/mpeg", ".mpga": "audio/mpeg",
+}
 
 
 async def ocr_image(data: bytes, api_url: str, api_key: str, model: str = OCR_MODEL) -> str:

@@ -25,7 +25,6 @@ def fixtures() -> dict[str, Path]:
 def _upload_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(config, "UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr(config, "ATTACHMENT_DB_PATH", tmp_path / "attachments.sqlite3")
-    monkeypatch.setenv("NITEC_API_KEY", "")
 
 
 async def test_xlsx_spec_lines(fixtures: dict[str, Path]) -> None:

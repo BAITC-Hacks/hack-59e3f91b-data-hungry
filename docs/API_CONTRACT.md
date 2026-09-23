@@ -50,7 +50,7 @@ Accepted: jpg/jpeg/png/webp/gif/bmp/tif/tiff; xlsx/xlsm/xls; docx/doc; pptx/ppt;
 ```json
 { "attachment_id": "att_...", "filename": "spec.xlsx", "kind": "image|excel|word|pdf|document|audio", "summary": "12 строк, найдено 9 артикулов", "session_id": "uuid" }
 ```
-Pass the returned `session_id` and `attachment_ids` in the next `/api/chat` call. Attachments from another session are rejected with HTTP 404. Original bytes and extracted text are cached in `backend/data/attachments.sqlite3` by SHA-256, file kind and processor/model signature; repeated uploads do not call OCR/ASR again. `MEDIA_AI_PROVIDER=openai` (default) uses `gpt-5.6-luna` for image/scanned-PDF text and `gpt-transcribe` for audio; it requires `OPENAI_API_KEY`. `MEDIA_AI_PROVIDER=nitec` uses Chandra OCR and Whisper through `llm.nitec.kz` and requires `NITEC_API_KEY`. OpenAI OCR does not return verified bounding boxes. The default SGR agent accepts only successfully recognized text; the legacy Anthropic agent can additionally inspect image bytes.
+Pass the returned `session_id` and `attachment_ids` in the next `/api/chat` call. Attachments from another session are rejected with HTTP 404. Original bytes and extracted text are cached in `backend/data/attachments.sqlite3` by SHA-256, file kind and processor/model signature; repeated uploads do not call OCR/ASR again. OpenAI uses `gpt-5.6-luna` for image/scanned-PDF text and `gpt-transcribe` for audio; it requires `OPENAI_API_KEY`. OpenAI OCR does not return verified bounding boxes. The default SGR agent accepts only successfully recognized text; the legacy Anthropic agent can additionally inspect image bytes.
 
 ## POST /api/upload/jobs and GET /api/upload/jobs/{job_id}?session_id=...
 
