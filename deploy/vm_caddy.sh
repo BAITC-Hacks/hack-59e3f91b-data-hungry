@@ -3,7 +3,7 @@
 #   ssh shared-azure-python 'bash ~/ekt-assistant/deploy/vm_caddy.sh'
 # Prereqs: DNS A-record of the domain -> VM public IP (34.93.3.248); ports 80 and 443 opened in Brev "Cloud Firewall Ports".
 set -euo pipefail
-DOMAINS="${DOMAINS:-orau.kz, www.orau.kz, ai.orau.kz, ekt.orau.kz}"
+DOMAINS="${DOMAINS:-ekt-assistant.orau.kz, etc-assitant.orau.kz}"
 export DEBIAN_FRONTEND=noninteractive
 if ! command -v caddy >/dev/null 2>&1; then
   sudo apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl >/dev/null
