@@ -1,8 +1,10 @@
 # Деплой на VM (Brev, GCP Mumbai)
 
-Текущая VM без GPU — `34.93.3.248`, сайт `https://ekt-assistant.orau.kz`.
-Настройка SGR/OCR/ASR через OpenAI и эмбеддингов/реранкера через NITEC:
-[VM_NITEC.md](VM_NITEC.md). Ниже сохранены инструкции для резервной NVIDIA VM.
+Основное демо временно размещено на [NVIDIA Brev](https://web-uct8xo9mo.gobrev.dev/widget/demo/index.html):
+H200 обслуживает локальные E5 и Qwen3, SGR/OCR/ASR используют OpenAI.
+VM без GPU с адресом `https://ekt-assistant.orau.kz` тоже обновлена, но доступ
+к NITEC с неё пока отсутствует; поиск там переходит на FTS5. Подробности:
+[VM_NITEC.md](VM_NITEC.md). Ниже — инструкции для основной NVIDIA VM.
 
 ## Локальные embedding и rerank модели на H200
 
