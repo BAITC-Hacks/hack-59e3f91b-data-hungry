@@ -1,4 +1,4 @@
-"""HTTP API smoke tests. catalog/knowledge/analogs/certificates/attachments are replaced per-test via monkeypatch
+"""HTTP API smoke tests. catalog/knowledge/analogs/attachments are replaced per-test via monkeypatch
 (no network, no DB); modules that do not exist yet get an empty placeholder so app.main can be imported."""
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-for _name in ("catalog", "knowledge", "analogs", "certificates", "attachments"):
+for _name in ("catalog", "knowledge", "analogs", "attachments"):
     try:
         importlib.import_module(f"app.{_name}")
     except ImportError:  # module not written yet -> placeholder so that `from . import <name>` works
@@ -71,9 +71,6 @@ def _stubs() -> dict[str, SimpleNamespace]:
         return [{**_card(PRODUCT), "id": 1, "reason": "тот же ток и число полюсов", "score": 0.9}]
 
     analogs = SimpleNamespace(find_analogs=find_analogs)
-    certificates = SimpleNamespace(
-        certificates_for=lambda product, detail=None: [{"title": "Сертификат ЕАЭС (демо)", "url": "http://localhost/cert/1", "demo": True}]
-    )
     registry: dict[str, Attachment] = {}
 
     async def save_and_parse(filename, content, mime, session_id=""):
@@ -91,7 +88,7 @@ def _stubs() -> dict[str, SimpleNamespace]:
         image_block=lambda att: {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": ""}},
         text_for_llm=lambda att, max_chars=6000: f"file {att.filename}",
     )
-    return {"catalog": catalog, "knowledge": knowledge, "analogs": analogs, "certificates": certificates, "attachments": attachments}
+    return {"catalog": catalog, "knowledge": knowledge, "analogs": analogs, "attachments": attachments}
 
 
 @pytest.fixture(autouse=True)
@@ -139,7 +136,7 @@ def test_search_and_product(client):
     assert r.status_code == 200
     products = r.json()["products"]
     assert products[0]["id"] == PRODUCT["id"] and products[0]["in_stock"] is True
-    assert products[0]["certificates"][0]["title"].startswith("Сертификат")
+    assert products[0]["certificates"] == []
     assert client.get("/api/products/search", params={"q": ""}).json() == {"products": []}
 
     r = client.get(f"/api/products/{PRODUCT['id']}")
@@ -147,7 +144,12 @@ def test_search_and_product(client):
     body = r.json()
     assert body["article"] == "200300285_" and body["detail"]["stores"][0]["name"] == "Алматы"
     assert body["detail"]["properties"] == {"Номинальный ток": "160 А"}
+    assert body["certificates"] == []
     assert client.get("/api/products/999999").status_code == 404
+
+
+def test_synthetic_certificate_page_is_gone(client):
+    assert client.get("/api/certificates/legrand-breaker").status_code == 404
 
 
 def test_upload_validation(client):

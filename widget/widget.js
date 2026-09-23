@@ -389,7 +389,7 @@
     var meta = [p.article ? t().art + ' ' + p.article : '', p.brand || ''].filter(Boolean).join(' · ');
     var stores = (p.stores || []).filter(function (s) { return Number(s.quantity) > 0; }).slice(0, 3)
       .map(function (s) { return s.name + ' ' + s.quantity; }).join(' · ');
-    var certs = (p.certificates || []).filter(function (c) { return c && safeUrl(c.url); });
+    var certs = (p.certificates || []).filter(function (c) { return c && !c.demo && safeUrl(c.url); });
     var card = el('div', { class: 'card' }, [
       el('div', { class: 'card-top' }, [
         thumb,
@@ -402,7 +402,7 @@
       stores ? el('div', { class: 'stores' }, [stores]) : null,
       certs.length ? el('div', { class: 'certs' }, certs.map(function (c) {
         return el('a', { href: safeUrl(c.url), target: '_blank', rel: 'noopener noreferrer', html: ICON.doc },
-          [(c.demo ? 'ДЕМО · ' : '') + (c.title || t().certs)]);
+          [c.title || t().certs]);
       })) : null,
       p.reason ? el('div', { class: 'reason' }, [p.reason]) : null,
       el('div', { class: 'card-actions' }, [

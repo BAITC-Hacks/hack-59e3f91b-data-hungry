@@ -24,12 +24,11 @@ def test_chat_completions_settings_and_strict_tools():
         assert spec["function"]["parameters"]["additionalProperties"] is False
 
 
-def test_synthetic_certificate_is_not_evidence_for_agent():
+def test_unverified_certificate_is_not_evidence_for_agent():
     card = {"id": 1, "name": "Тест", "stock_status": "unknown", "certificates": [
-        {"title": "Сертификат", "number": "SYNTHETIC-123", "demo": True, "url": "https://example.test/demo"},
+        {"title": "Сертификат", "number": "UNVERIFIED-123", "url": "https://example.test/document"},
     ]}
     visible = agent._card_for_llm(card)
-    assert visible["certificates_demo_only"] is True
     assert "certificates" not in visible
 
 

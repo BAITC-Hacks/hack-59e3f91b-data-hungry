@@ -21,7 +21,7 @@ from typing import Any
 import anthropic
 import openai
 
-from . import agent_openai, agent_sdk, analogs, attachments as attachments_mod, catalog, certificates, config, ekt_api, knowledge
+from . import agent_openai, agent_sdk, analogs, attachments as attachments_mod, catalog, config, ekt_api, hybrid_search, knowledge
 from .cart import PendingActionError, cart_store
 from .sessions import Session
 
@@ -47,7 +47,7 @@ SYSTEM_PROMPT = """Ты — AI-ассистент интернет-магази�
 - Артикул или код товара в запросе (например «027228», «200300285_») — сначала get_product(article=...), при пустом результате — search_products.
 - Если товар найден, но quantity = 0 / stock_status = out_of_stock — ОБЯЗАТЕЛЬНО вызови find_analogs и объясни, чем каждый аналог подходит (те же параметры: ток, полюса, бренд/класс, назначение). Сообщи, что сам товар можно заказать под заказ через менеджера.
 - Условия покупки (доставка, оплата, минимальный заказ/сумма, возврат, гарантия, контакты, режим работы) — только через get_purchase_terms; отвечай конкретно: суммы, города, сроки, пороги.
-- Сертификаты: если в карточке товара (поле certificates) есть документы — дай их названия и ссылки. Если пусто — скажи, что сертификаты и паспорта предоставляются по запросу менеджером (не выдумывай ссылки).
+- Сертификаты: в каталожном API нет подтверждённых документов для конкретных товаров. Не называй номера, сроки, регламенты и ссылки на сертификаты; предложи запросить документ у менеджера.
 
 КОРЗИНА — ТОЛЬКО С ЯВНОГО ПОДТВЕРЖДЕНИЯ:
 - Ты НЕ можешь класть товар в корзину. Ты можешь только ПРЕДЛОЖИТЬ через propose_add_to_cart, после чего корзина НЕ изменена, пока пользователь явно не подтвердит («да, добавь» или кнопка «Подтвердить»).
@@ -422,23 +422,9 @@ def _card_for_llm(card: dict[str, Any], *, full: bool = False) -> dict[str, Any]
             out["data_conflict"] = (f"В названии указан ток {title_current.group(1)} А, "
                                     f"в характеристике «Номинальный ток» — {detail_current.group(1)} А. "
                                     "Не выбирай одно значение без проверки у менеджера.")
-    certs = [c for c in (card.get("certificates") or []) if not c.get("demo")]
-    if certs:
-        out["certificates"] = [{k: c.get(k) for k in ("title", "number", "valid_until", "url") if c.get(k)} for c in certs]
-    elif any(c.get("demo") for c in (card.get("certificates") or [])):
-        out["certificates_demo_only"] = True
     if full and card.get("description"):
         out["description"] = str(card["description"])[:600]
     return out
-
-
-def with_certificates(card: dict[str, Any], detail: dict[str, Any] | None = None) -> dict[str, Any]:
-    try:
-        card["certificates"] = certificates.certificates_for(card, detail)
-    except Exception:  # registry problems must never break a reply
-        log.exception("certificates_for failed for %s", card.get("id"))
-        card.setdefault("certificates", [])
-    return card
 
 
 def _dump(obj: Any) -> str:
@@ -450,16 +436,11 @@ async def _tool_search_products(inp: dict[str, Any], state: TurnState) -> str:
     if not query:
         return "Ошибка: пустой запрос."
     limit = max(1, min(int(inp.get("limit") or 5), 10))
-    found = catalog.get_by_article(query)
-    seen = {p["id"] for p in found}
-    # over-fetch so that in-stock items can be ranked first (the details are fetched for every card anyway)
-    for p in catalog.search(query, limit=limit * 2, brand=inp.get("brand") or None, category=inp.get("category") or None):
-        if p["id"] not in seen:
-            seen.add(p["id"])
-            found.append(p)
+    found = await hybrid_search.search(query, limit=limit, brand=inp.get("brand") or None,
+                                       category=inp.get("category") or None)
     if not found:
         return _dump({"results": [], "hint": "Ничего не найдено. Попробуй другой запрос (без бренда, по ключевым словам) или эскалацию."})
-    cards = rank_in_stock_first([with_certificates(c) for c in await catalog.product_cards(found[: limit * 2])])[:limit]
+    cards = await catalog.product_cards(found)
     state.add_products(cards)
     payload: dict[str, Any] = {"results": [_card_for_llm(c) for c in cards]}
     unmatched = unmatched_query_tokens(query, cards)
@@ -510,7 +491,7 @@ async def _tool_get_product(inp: dict[str, Any], state: TurnState) -> str:
     cards = []
     for product, detail in zip(products, details):
         card = await catalog.product_card(product, detail, with_detail=False)
-        cards.append(with_certificates(card, detail))
+        cards.append(card)
     state.add_products(cards)
     unavailable = bool(cards) and all(c["stock_status"] == "unknown" for c in cards)
     return _dump({"found": True, "products": [_card_for_llm(c, full=True) for c in cards],
@@ -527,7 +508,6 @@ async def _tool_find_analogs(inp: dict[str, Any], state: TurnState) -> str:
     if not cards:
         cards = await analogs.find_analogs(pid, limit=limit, only_in_stock=False)
         note = "Аналогов в наличии нет — показаны ближайшие позиции без остатка (под заказ)."
-    cards = [with_certificates(c) for c in cards]
     state.add_products(cards)
     payload: dict[str, Any] = {"analogs": [_card_for_llm(c) for c in cards]}
     if note:

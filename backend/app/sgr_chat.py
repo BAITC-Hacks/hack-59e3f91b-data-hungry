@@ -87,7 +87,7 @@ class SearchProducts(EktTool):
 
 
 class GetProduct(EktTool):
-    """Get one product by id or article with live stock, price, properties and available certificates."""
+    """Get one product by id or article with live stock, price and properties."""
 
     tool_name: ClassVar[str] = "get_product"
     handler_name: ClassVar[str] = "get_product"
@@ -176,7 +176,7 @@ class MatchAttachmentItems(BaseTool):
                 matched.append({"source": row.get("raw") or name, "article": article or None,
                                 "requested_qty": row.get("qty"), "product_id": product["id"] if product else None})
             unique = list({p["id"]: p for p in products}.values())
-            cards = [legacy.with_certificates(c) for c in await catalog.product_cards(unique)]
+            cards = await catalog.product_cards(unique)
             state.add_products(cards)
             by_id = {c["id"]: legacy._card_for_llm(c) for c in cards}
             for row in matched:
@@ -272,8 +272,6 @@ def _config() -> AgentConfig:
                "Даже для спецификации вызывай propose_add_to_cart ТОЛЬКО если клиент явно попросил добавить или купить.\n")
     prompt += ("Если инструмент вернул upstream_unavailable=true, не повторяй этот поиск: "
                "ответь, что актуальные цена и наличие не подтверждены, и предложи связаться с менеджером.\n")
-    prompt += ("Поле certificates_demo_only означает, что есть только синтетическая демо-запись, "
-               "НЕ реальный сертификат. Не называй номер и срок действия демо-документа как факт.\n")
     prompt += "Если инструмент вернул data_conflict, явно предупреди о противоречии данных и не выбирай одно значение.\n"
     prompt += "Доступные инструменты:\n{available_tools}"
     return AgentConfig(

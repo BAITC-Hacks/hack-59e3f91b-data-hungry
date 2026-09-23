@@ -230,7 +230,7 @@
   <!-- On the deployed demo, use this page's backend. Port 8765 / file:// keep the documented standalone local preview. -->
   <script>
     const widgetScript = document.createElement('script');
-    widgetScript.src = '../widget.js';
+    widgetScript.src = '../widget.js?v=20260923-no-demo-certificates';
     widgetScript.dataset.api = (location.protocol === 'file:' || location.port === '8765')
       ? 'http://localhost:8000' : location.origin;
     widgetScript.dataset.open = '1';

@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import agent, attachments, catalog, certificates, config, ekt_api, recognition, upload_jobs
+from . import agent, attachments, catalog, config, ekt_api, hybrid_search, recognition, upload_jobs
 from .cart import PendingActionError, cart_store
 from .schemas import (
     Cart,
@@ -241,11 +241,8 @@ async def products_search(q: str = "", limit: int = 10) -> Any:
     if not q:
         return {"products": []}
     limit = max(1, min(limit, 20))
-    found = catalog.get_by_article(q)
-    seen = {p["id"] for p in found}
-    found += [p for p in catalog.search(q, limit=limit * 2) if p["id"] not in seen]  # over-fetch: in-stock first
-    cards = [agent.with_certificates(c) for c in await catalog.product_cards(found[: limit * 2])]
-    return {"products": agent.rank_in_stock_first(cards)[:limit]}
+    found = await hybrid_search.search(q, limit=limit)
+    return {"products": await catalog.product_cards(found)}
 
 
 @app.get("/api/products/{product_id}", response_model=ProductDetailResponse)
@@ -257,7 +254,7 @@ async def product_get(product_id: int = ProductId) -> Any:
             raise HTTPException(status_code=404, detail="Товар не найден")
         product = {k: detail.get(k) for k in ("id", "name", "article", "price", "image", "url")}
         product["brand"] = None
-    card = agent.with_certificates(await catalog.product_card(product, detail, with_detail=False), detail)
+    card = await catalog.product_card(product, detail, with_detail=False)
     card["detail"] = (
         {
             "stores": ekt_api.stores_in_stock(detail),
@@ -268,14 +265,6 @@ async def product_get(product_id: int = ProductId) -> Any:
         else None
     )
     return card
-
-
-# ---- certificates (demo registry) -------------------------------------------------------------------------------
-@app.get("/api/certificates/{cert_id}", response_class=HTMLResponse)
-async def certificate_page(cert_id: str) -> Any:
-    """Printable card for a certificate from the demo registry (clearly watermarked as a demo document)."""
-    status = 200 if certificates.get_certificate(cert_id) else 404
-    return HTMLResponse(certificates.render_certificate_html(cert_id), status_code=status)
 
 
 # ---- health -----------------------------------------------------------------------------------------------------

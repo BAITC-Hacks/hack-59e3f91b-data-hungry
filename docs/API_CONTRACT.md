@@ -17,7 +17,7 @@ Response (`ChatResponse`, same shape for every chat-like endpoint):
   "reply": "markdown text (bold, lists, links allowed)",
   "products": [ { "id": 515291, "name": "...", "article": "200300285_", "price": 64920, "quantity": 23, "in_stock": true,
                   "url": "https://ekt.kz/catalog/.../", "image": "https://...jpg", "brand": "Legrand", "reason": "почему предложен (для аналогов)",
-                  "certificates": [ {"title": "...", "url": "..."} ] } ],
+                  "certificates": [] } ],
   "pending_action": { "action_id": "act_...", "type": "add_to_cart",
                       "items": [ { "product_id": 515291, "name": "...", "qty": 2, "max_qty": 23, "price": 64920 } ],
                       "expires_at": "ISO-8601" } ,
@@ -30,6 +30,7 @@ Response (`ChatResponse`, same shape for every chat-like endpoint):
 ```
 `pending_action` is non-null when the assistant proposed adding something and is waiting for the user's explicit confirmation.
 The widget renders **Подтвердить / Отмена** buttons for it. Typing «да, добавь» in chat works too.
+`certificates` остаётся пустым, пока партнёр не предоставит проверяемые документы по конкретным товарам. Демонстрационные сертификаты и маршрут `/api/certificates/{id}` удалены.
 
 ## POST /api/chat/confirm
 ```json

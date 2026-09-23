@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # backend/ on sys.path (no package install)
 
-from app import certificates, knowledge  # noqa: E402
+from app import knowledge  # noqa: E402
 
 
 def test_chunks_loaded_from_all_files() -> None:
@@ -85,38 +85,3 @@ def test_kazakh_query_finds_delivery_and_payment() -> None:
     assert "оставк" in knowledge.search_terms("жеткізу бағасы қанша")[0]["title"].lower()
     top = knowledge.search_terms("төлем қалай жасалады")[0]
     assert "оплат" in (top["title"] + top["text"]).lower()
-
-
-# --- certificates (demo registry) ------------------------------------------------------------
-
-
-def test_certificates_registry_is_demo_and_linked() -> None:
-    cert = certificates.get_certificate("legrand-breaker")
-    assert cert and cert["demo"] is True and cert["brand"] == "Legrand"
-    assert cert["url"].endswith("/api/certificates/legrand-breaker")
-    assert cert["valid_until"][:4] in ("2027", "2028")
-    assert certificates.get_certificate("nope") is None
-
-
-def test_certificates_for_products() -> None:
-    legrand = {"id": 515291, "name": "027228 АВ DRX250 MT 3ф 160А 18ka Legrand (1)", "brand": "Legrand", "cat1": "nizkovoltnaya_apparatura"}
-    certs = certificates.certificates_for(legrand)
-    assert len(certs) == 1 and "ТР ТС 004/2011" in certs[0]["title"] and certs[0]["url"].startswith("http")
-    # EKT cable via TORGOVAYA_MARKA gets the EAEU certificate + СТ-KZ
-    cable = {"id": 23466, "name": "ВВГ п нг (А) 3 х 2,5 0,66 кВ (300) ГОСТ EKT"}
-    detail = {"properties": {"TORGOVAYA_MARKA": "EKT"}, "url": "https://ekt.kz/catalog/kabel_provod/med/x/"}
-    titles = [c["title"] for c in certificates.certificates_for(cable, detail)]
-    assert any("СТ-KZ" in t for t in titles) and any("ЕАЭС" in t for t in titles)
-    # brand only known from the category slug; light switch is a socket-family product
-    switch = {"name": "SE Unica New Бел Выключатель 1-клавишный", "url": "https://ekt.kz/catalog/novinki/unica_studio/x/"}
-    assert certificates.resolve_brand(switch) == "Schneider Electric"
-    assert certificates.detect_family(switch) == "socket"
-    # unknown brand -> nothing (assistant offers documents on request)
-    assert certificates.certificates_for({"name": "BOSCH Сверло по металлу HSS-R 5.2x52x86мм"}) == []
-    assert certificates.certificates_for({"name": "L26 Роз.о/у белая Demet 711-0200-121"}) == []
-
-
-def test_certificate_html_card_has_demo_watermark() -> None:
-    html_page = certificates.render_certificate_html("megalight-lighting", {"name": "LED STARK 30W", "article": "ярп4520"})
-    assert "ДЕМО" in html_page and "MEGALIGHT" in html_page and "ярп4520" in html_page
-    assert "не найден" in certificates.render_certificate_html("missing").lower()
