@@ -26,6 +26,8 @@ PROFILES = {
 
 
 def ensure_key() -> None:
+    if hybrid_search.available():
+        return
     if not os.getenv("NITEC_API_KEY"):
         os.environ["NITEC_API_KEY"] = getpass.getpass("NITEC API key: ")
     if not os.environ["NITEC_API_KEY"]:

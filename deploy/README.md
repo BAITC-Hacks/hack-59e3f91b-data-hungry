@@ -1,5 +1,25 @@
 # Деплой на VM (Brev, GCP Mumbai)
 
+## Локальные embedding и rerank модели на H200
+
+`deploy/vm_models.sh` поднимает два Docker-контейнера vLLM с автозапуском после перезагрузки VM: `intfloat/multilingual-e5-large-instruct` на `127.0.0.1:8891` и `Qwen/Qwen3-Reranker-8B` на `127.0.0.1:8892`. Порты доступны только самой VM. Публичный endpoint виджета и Jupyter не меняются. Модели кэшируются в `~/ekt-model-cache` на диске VM.
+
+```bash
+ssh distinctive-orange-mammal 'bash ~/ekt-assistant/deploy/vm_models.sh'
+ssh distinctive-orange-mammal 'curl -fsS http://127.0.0.1:8891/v1/models && curl -fsS http://127.0.0.1:8892/v1/models'
+```
+
+В `~/ekt-assistant/backend/.env` задайте без секретов:
+
+```dotenv
+EKT_EMBEDDING_BASE_URL=http://127.0.0.1:8891/v1
+EKT_RERANK_BASE_URL=http://127.0.0.1:8892/v1
+```
+
+Приложению нужны `backend/data/catalog.sqlite` и `backend/data/semantic_catalog.sqlite` на VM. Последний файл не хранится в Git; его нужно перенести отдельно. Проверяйте одинаковую модель и совместимость эмбеддингов после замены сервера; при необходимости пересоберите коллекцию локальным сервером. Если отдельный контейнер не отвечает, поиск автоматически возвращается к гибридному или лексическому порядку. Для диагностики: `docker logs --tail 100 ekt-embed-e5` и `docker logs --tail 100 ekt-rerank-qwen`.
+
+Для запуска бэкенда на ноутбуке через те же сервисы держите SSH-туннель `ssh -N -L 8891:127.0.0.1:8891 -L 8892:127.0.0.1:8892 distinctive-orange-mammal` и задайте такие же два URL в локальном `backend/.env`. Ключ NITEC для локальных loopback-серверов не нужен.
+
 1. На ноутбуке используйте настроенный SSH-алиас `distinctive-orange-mammal`. Перед синхронизацией проверьте VM: `ssh distinctive-orange-mammal 'hostname; nvidia-smi'` (подробности — [docs/VM.md](../docs/VM.md)). При смене VM укажите другой алиас через `VM_HOST`.
 2. Для текущей VM, где публичный HTTPS-маршрут `https://web-uct8xo9mo.gobrev.dev` ведёт на порт **8881**, из корня локального репозитория запустить:
 

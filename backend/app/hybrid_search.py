@@ -15,6 +15,7 @@ import sqlite3
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 import numpy as np
@@ -36,8 +37,29 @@ def collection_path() -> Path:
     return Path(os.getenv("EKT_SEMANTIC_DB_PATH", str(DEFAULT_DB)))
 
 
+def _service_base(kind: str) -> str:
+    override = os.getenv("EKT_EMBEDDING_BASE_URL" if kind == "embedding" else "EKT_RERANK_BASE_URL")
+    return (override or os.getenv("NITEC_API_BASE_URL") or os.getenv("NITEC_BASE_URL")
+            or "https://llm.nitec.kz/v1").rstrip("/")
+
+
+def _service_headers(kind: str) -> dict[str, str]:
+    key = os.getenv("EKT_EMBEDDING_API_KEY" if kind == "embedding" else "EKT_RERANK_API_KEY") or os.getenv("NITEC_API_KEY")
+    if key:
+        return {"Authorization": "Bearer " + key}
+    if urlparse(_service_base(kind)).hostname in {"127.0.0.1", "localhost", "::1"}:
+        return {}
+    raise RuntimeError(f"API key required for non-local {kind} endpoint")
+
+
 def available() -> bool:
-    return bool(os.getenv("NITEC_API_KEY")) and collection_path().is_file()
+    if not collection_path().is_file():
+        return False
+    try:
+        _service_headers("embedding")
+        return True
+    except RuntimeError:
+        return False
 
 
 def rerank_enabled() -> bool:
@@ -82,12 +104,10 @@ def _query_text(model: str, query: str) -> str:
 
 
 async def _embed_query(model: str, query: str, dim: int) -> np.ndarray:
-    base = os.getenv("NITEC_API_BASE_URL") or os.getenv("NITEC_BASE_URL") or "https://llm.nitec.kz/v1"
-    url = base.rstrip("/") + "/embeddings"
-    key = os.environ["NITEC_API_KEY"]
+    url = _service_base("embedding") + "/embeddings"
     async with httpx.AsyncClient(timeout=httpx.Timeout(40.0, connect=10.0)) as client:
         for attempt in range(2):
-            response = await client.post(url, headers={"Authorization": "Bearer " + key},
+            response = await client.post(url, headers=_service_headers("embedding"),
                                          json={"model": model, "input": [_query_text(model, query)]})
             if response.status_code in (429, 500, 502, 503, 504) and attempt == 0:
                 await asyncio.sleep(0.5)
@@ -162,7 +182,7 @@ async def ranked(query: str, limit: int = 10, *, category: str | None = None,
                  weights: dict[str, float] = WEIGHTS) -> list[dict[str, Any]]:
     """Search with both indices; each hit includes a product and a score breakdown."""
     if not available():
-        raise RuntimeError("NITEC_API_KEY and semantic collection are required for hybrid ranking")
+        raise RuntimeError("Embedding endpoint and semantic collection are required for hybrid ranking")
     if not brand:
         detected, rest = catalog._query_brand(catalog.query_tokens(query)[0])
         if detected and rest:
@@ -209,11 +229,10 @@ async def rerank_hits(query: str, hits: list[dict[str, Any]], *, model: str | No
     texts = await asyncio.to_thread(_rerank_documents, [hit["id"] for hit in leading])
     documents = [texts.get(hit["id"]) or f"Товар: {hit['product']['name']}\nАртикул: {hit['product'].get('article') or ''}"
                  for hit in leading]
-    base = os.getenv("NITEC_API_BASE_URL") or os.getenv("NITEC_BASE_URL") or "https://llm.nitec.kz/v1"
     async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
         response = await client.post(
-            base.rstrip("/") + "/rerank",
-            headers={"Authorization": "Bearer " + os.environ["NITEC_API_KEY"]},
+            _service_base("rerank") + "/rerank",
+            headers=_service_headers("rerank"),
             json={"model": model or rerank_model(), "query": query, "documents": documents, "top_n": count},
         )
         response.raise_for_status()
@@ -249,10 +268,10 @@ async def search(query: str, limit: int = 10, *, category: str | None = None,
             if rerank_enabled():
                 try:
                     hits = await rerank_hits(query, hits)
-                except (httpx.HTTPError, OSError, ValueError, KeyError, sqlite3.Error) as exc:
+                except (httpx.HTTPError, OSError, ValueError, KeyError, RuntimeError, sqlite3.Error) as exc:
                     log.warning("reranker unavailable (%s); keeping hybrid order", type(exc).__name__)
             rest = [hit["product"] for hit in hits]
-        except (httpx.HTTPError, OSError, ValueError, KeyError, sqlite3.Error) as exc:
+        except (httpx.HTTPError, OSError, ValueError, KeyError, RuntimeError, sqlite3.Error) as exc:
             log.warning("hybrid retrieval unavailable (%s); falling back to FTS", type(exc).__name__)
             rest = await asyncio.to_thread(catalog.search, query, limit=limit, category=category,
                                            brand=brand, exclude_id=exclude_id)

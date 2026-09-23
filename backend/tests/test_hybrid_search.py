@@ -23,6 +23,18 @@ def test_fusion_rewards_agreement_and_explains_score() -> None:
     assert hits[-1]["features"]["semantic_hit"] == 0.0
 
 
+def test_local_vm_endpoints_need_no_nitec_key(monkeypatch, tmp_path) -> None:
+    collection = tmp_path / "semantic.sqlite"
+    collection.touch()
+    monkeypatch.setattr(hybrid_search, "collection_path", lambda: collection)
+    monkeypatch.delenv("NITEC_API_KEY", raising=False)
+    monkeypatch.setenv("EKT_EMBEDDING_BASE_URL", "http://127.0.0.1:8891/v1")
+    monkeypatch.setenv("EKT_RERANK_BASE_URL", "http://localhost:8892/v1")
+    assert hybrid_search.available()
+    assert hybrid_search._service_headers("embedding") == {}
+    assert hybrid_search._service_headers("rerank") == {}
+
+
 @pytest.mark.skipif(not config.DB_PATH.exists(), reason="catalog index missing")
 def test_fts_scored_returns_bm25_and_honors_filter() -> None:
     rows = catalog.fts_scored("автомат 16А", limit=20, brand="Legrand")
