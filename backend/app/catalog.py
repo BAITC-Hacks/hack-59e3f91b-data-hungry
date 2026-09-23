@@ -644,6 +644,7 @@ async def product_card(product: dict[str, Any], detail: dict[str, Any] | None = 
         "description": _clean_description(d.get("description")),
         "reason": None,
         "certificates": [],
+        "stock_note": (f"остаток по данным на {d['stale_since']} (сайт ekt.kz не ответил вовремя)" if d.get("stale_since") else None),
     }
 
 

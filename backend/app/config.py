@@ -21,6 +21,9 @@ EKT_API_USER = os.getenv("EKT_API_USER", "apiuser")
 EKT_API_PASS = os.getenv("EKT_API_PASS", "ApiEkt!2026")
 EKT_CART_URL = "https://ekt.kz/personal/cart/"
 
+# anthropic = Messages API with ANTHROPIC_API_KEY; claude_code = Claude Agent SDK (subscription login / CLAUDE_CODE_OAUTH_TOKEN);
+# auto = anthropic when a key is present, otherwise claude_code when it is logged in.
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "auto").lower()
 LLM_MODEL = os.getenv("LLM_MODEL", "claude-opus-5")
 LLM_EFFORT = os.getenv("LLM_EFFORT", "low")  # low | medium | high — chat must answer in seconds
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))

@@ -20,7 +20,7 @@ from typing import Any
 
 import anthropic
 
-from . import analogs, attachments as attachments_mod, catalog, certificates, config, ekt_api, knowledge
+from . import agent_sdk, analogs, attachments as attachments_mod, catalog, certificates, config, ekt_api, knowledge
 from .cart import PendingActionError, cart_store
 from .sessions import Session
 
@@ -65,7 +65,9 @@ SYSTEM_PROMPT = """Ты — AI-ассистент интернет-магази�
 
 КОНТЕКСТ СТРАНИЦЫ: если в контексте указан page_url страницы товара на ekt.kz — пользователь смотрит именно этот товар; используй это для «есть ли в наличии?», «добавь 2 шт» и т.п. (найди товар по URL/названию через search_products или по id, если он известен из истории).
 
-СТИЛЬ: коротко и по делу, без длинных вступлений. Markdown: **жирный** для ключевых цифр, списки для перечислений, ссылки на карточки товара. Карточки товаров виджет показывает сам — не дублируй все характеристики текстом, назови 3–5 ключевых. В конце, если уместно, предложи следующий шаг (добавить в корзину, посмотреть аналоги, уточнить количество)."""
+СТИЛЬ: коротко и по делу, без длинных вступлений. Markdown: **жирный** для ключевых цифр, списки для перечислений, ссылки на карточки товара. Карточки товаров виджет показывает сам — не дублируй все характеристики текстом, назови 3–5 ключевых. В конце, если уместно, предложи следующий шаг (добавить в корзину, посмотреть аналоги, уточнить количество).
+
+Если в карточке товара есть поле stock_note — это значит остаток взят из последнего снимка, а не в реальном времени: обязательно скажи клиенту «остаток по данным на <время>» и предложи уточнить у менеджера перед крупным заказом. Цена в карточке — это «цена в магазине»; на сайте ekt.kz при заказе действует дополнительная скидка, так и говори («цена в магазине X ₸, на сайте дешевле»)."""
 
 # ---------------------------------------------------------------------------------------------------------------
 # Tools (strict schemas: every property listed in `required`, optional ones are nullable)
@@ -308,12 +310,30 @@ def record_exchange(session: Session, user_text: str, assistant_text: str) -> No
     _trim_history(session)
 
 
-def llm_configured() -> bool:
-    """Whether the SDK will find a credential: an env key/token, or an `ant auth login` profile on disk."""
+def _anthropic_configured() -> bool:
     if os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"):
         return True
     profile_dir = Path.home() / ".config" / "anthropic"
     return profile_dir.is_dir() and any(profile_dir.iterdir())
+
+
+def llm_provider() -> str | None:
+    """Resolve the active LLM backend: 'anthropic', 'claude_code' or None when nothing is configured."""
+    p = config.LLM_PROVIDER
+    if p == "anthropic":
+        return p if _anthropic_configured() else None
+    if p == "claude_code":
+        return p if agent_sdk.configured() else None
+    if _anthropic_configured():
+        return "anthropic"
+    if agent_sdk.configured():
+        return "claude_code"
+    return None
+
+
+def llm_configured() -> bool:
+    """Whether any LLM backend can authenticate (Anthropic API key or Claude Code login/token)."""
+    return llm_provider() is not None
 
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
@@ -634,7 +654,7 @@ def _public_pending(action: dict[str, Any] | None) -> dict[str, Any] | None:
 
 NO_KEY_REPLY = {
     "ru": (
-        "LLM-ассистент пока не настроен: на сервере нет ANTHROPIC_API_KEY. Поиск по каталогу, корзина и подтверждения "
+        "LLM-ассистент пока не настроен: на сервере нет ANTHROPIC_API_KEY или CLAUDE_CODE_OAUTH_TOKEN. Поиск по каталогу, корзина и подтверждения "
         "работают, а свободный диалог появится после добавления ключа в `.env`."
     ),
     "kk": "LLM-ассистент әлі бапталмаған: серверде ANTHROPIC_API_KEY жоқ. Кілт `.env` файлына қосылғаннан кейін диалог іске қосылады.",
@@ -698,6 +718,17 @@ async def chat(session: Session, message: str, attachments: list[Any], page_url:
 
     # (c) LLM tool loop
     context = _context_block(session, lang, page_url or session.page_url, pending)
+    if llm_provider() == "claude_code":
+        parts = [context] + [_wrap_attachment(a) for a in attachments]
+        parts.append("Сообщение пользователя:\n" + (message.strip() or ("Посмотри вложение." if attachments else "(пустое сообщение)")))
+        try:
+            reply = await agent_sdk.run_turn(session, state, "\n\n".join(parts), system_prompt=SYSTEM_PROMPT, tool_specs=TOOLS, handlers=TOOL_HANDLERS)
+        except Exception:
+            log.exception("claude_code turn failed")
+            reply = "Не удалось связаться с AI-сервисом. Попробуйте ещё раз или свяжитесь с менеджером: " + MANAGER_CONTACTS["phone"]
+        record_exchange(session, message, reply)
+        _trim_history(session)
+        return _response(session, reply, state, cart_updated=False, t0=t0)
     checkpoint = len(session.messages)
     session.messages.append({"role": "user", "content": _user_content(message, attachments, context)})
     reply = ""

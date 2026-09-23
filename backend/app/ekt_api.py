@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import sqlite3
+import threading
 import time
 from typing import Any
 
@@ -16,7 +19,9 @@ import httpx
 
 from . import config
 
+log = logging.getLogger("ekt.api")
 _decoder = json.JSONDecoder()
+DETAIL_HTTP_TIMEOUT = float(__import__("os").getenv("DETAIL_HTTP_TIMEOUT", "12"))  # ekt.kz answers in 0.2-8 s; fall back to the DB after this
 _client: httpx.AsyncClient | None = None
 _detail_cache: dict[int, tuple[float, dict[str, Any]]] = {}
 _sem = asyncio.Semaphore(24)  # the endpoint copes with ~24 in flight (measured 24 calls in 3.5 s)
@@ -55,17 +60,74 @@ async def fetch_detail(product_id: int, *, ttl: int | None = None) -> dict[str, 
         return hit[1]
     async with _sem:
         try:
-            r = await _get_client().get("/products/detail", params={"id": product_id})
+            r = await _get_client().get("/products/detail", params={"id": product_id}, timeout=DETAIL_HTTP_TIMEOUT)
             r.raise_for_status()
             data = parse_json(r.text)
-        except Exception:
+        except Exception as exc:
             if ttl == 0:
                 return None
-            return hit[1] if hit else None
+            if hit:
+                return hit[1]
+            stale = _db_get(product_id)
+            if stale is not None:
+                log.warning("detail %s: live fetch failed (%s); serving snapshot from %s", product_id, type(exc).__name__, stale.get("stale_since"))
+            return stale
     if not isinstance(data, dict) or "id" not in data:
         return None
     _detail_cache[product_id] = (now, data)
+    _db_put(product_id, data, now)
     return data
+
+
+# ---- persistent detail snapshot (table product_details in catalog.sqlite; also filled by scripts/import_details.py) ----
+_db_lock = threading.Lock()
+_db_conn: sqlite3.Connection | None = None
+
+
+def _db() -> sqlite3.Connection | None:
+    global _db_conn
+    if _db_conn is None:
+        try:
+            _db_conn = sqlite3.connect(str(config.DB_PATH), check_same_thread=False)
+            _db_conn.execute("CREATE TABLE IF NOT EXISTS product_details (id INTEGER PRIMARY KEY, fetched_at REAL NOT NULL, quantity INTEGER, data TEXT NOT NULL)")
+            _db_conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("detail snapshot DB unavailable: %s", exc)
+            return None
+    return _db_conn
+
+
+def _db_get(product_id: int) -> dict[str, Any] | None:
+    con = _db()
+    if con is None:
+        return None
+    with _db_lock:
+        row = con.execute("SELECT fetched_at, data FROM product_details WHERE id=?", (int(product_id),)).fetchone()
+    if not row:
+        return None
+    try:
+        data = json.loads(row[1])
+    except json.JSONDecodeError:
+        return None
+    data["stale_since"] = time.strftime("%d.%m %H:%M", time.localtime(row[0]))
+    data["stale_age_s"] = int(time.time() - row[0])
+    return data
+
+
+def _db_put(product_id: int, data: dict[str, Any], fetched_at: float) -> None:
+    con = _db()
+    if con is None:
+        return
+    try:
+        with _db_lock:
+            con.execute(
+                "INSERT INTO product_details(id, fetched_at, quantity, data) VALUES (?,?,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET fetched_at=excluded.fetched_at, quantity=excluded.quantity, data=excluded.data",
+                (int(product_id), fetched_at, data.get("quantity"), json.dumps(data, ensure_ascii=False)),
+            )
+            con.commit()
+    except sqlite3.Error as exc:
+        log.warning("detail snapshot write failed: %s", exc)
 
 
 async def fetch_details(product_ids: list[int]) -> dict[int, dict[str, Any]]:
