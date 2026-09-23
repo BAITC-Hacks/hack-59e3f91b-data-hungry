@@ -1,31 +1,9 @@
 #!/usr/bin/env bash
-# Run on the VM only after ekt.orau.kz has a DNS A record and TCP 80/443 are open.
-# Serves only ekt.orau.kz; other orau.kz hosts are deliberately untouched.
+# Run ON THE VM (needs sudo): installs Caddy and reverse-proxies the domain(s) to the backend on :8000 with automatic HTTPS.
+#   ssh shared-azure-python 'bash ~/ekt-assistant/deploy/vm_caddy.sh'
+# Prereqs: DNS A-record of the domain -> VM public IP (34.93.3.248); ports 80 and 443 opened in Brev "Cloud Firewall Ports".
 set -euo pipefail
-
-DOMAIN=ekt.orau.kz
-APP_PORT="${APP_PORT:-8881}"
-EXPECTED_IP="${EXPECTED_IP:-}"
-
-if [[ ! "$APP_PORT" =~ ^[0-9]+$ ]] || (( APP_PORT < 1 || APP_PORT > 65535 )); then
-  echo "Invalid APP_PORT: $APP_PORT" >&2
-  exit 1
-fi
-if ! curl -fsS --max-time 5 "http://127.0.0.1:${APP_PORT}/api/health" >/dev/null; then
-  echo "Backend is not healthy on 127.0.0.1:${APP_PORT}" >&2
-  exit 1
-fi
-
-DNS_IP="$(getent ahostsv4 "$DOMAIN" | awk 'NR == 1 { print $1 }' || true)"
-if [[ -z "$DNS_IP" ]]; then
-  echo "No A record found for $DOMAIN; configure DNS before enabling HTTPS" >&2
-  exit 1
-fi
-if [[ -n "$EXPECTED_IP" && "$DNS_IP" != "$EXPECTED_IP" ]]; then
-  echo "$DOMAIN resolves to $DNS_IP, expected $EXPECTED_IP" >&2
-  exit 1
-fi
-
+DOMAINS="${DOMAINS:-ekt-assistant.orau.kz, etc-assitant.orau.kz}"
 export DEBIAN_FRONTEND=noninteractive
 if ! command -v caddy >/dev/null 2>&1; then
   sudo apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl >/dev/null
@@ -34,14 +12,19 @@ if ! command -v caddy >/dev/null 2>&1; then
   sudo apt-get update -qq >/dev/null
   sudo apt-get install -y -qq caddy >/dev/null
 fi
+caddy version
 sudo tee /etc/caddy/Caddyfile >/dev/null <<CADDY
-$DOMAIN {
+$DOMAINS {
     encode gzip
-    reverse_proxy 127.0.0.1:$APP_PORT
+    reverse_proxy 127.0.0.1:8000
+}
+:80 {
+    reverse_proxy 127.0.0.1:8000
 }
 CADDY
 sudo caddy validate --config /etc/caddy/Caddyfile
-sudo systemctl enable --now caddy
+sudo systemctl enable --now caddy >/dev/null 2>&1 || true
 sudo systemctl restart caddy
+sleep 2
 systemctl is-active caddy
-echo "Caddy is proxying $DOMAIN -> 127.0.0.1:$APP_PORT; verify HTTPS from outside the VM"
+echo "Caddy is proxying $DOMAINS -> 127.0.0.1:8000 (certs are issued automatically once DNS points here and 80/443 are open)"
