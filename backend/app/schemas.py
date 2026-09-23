@@ -157,4 +157,5 @@ class HealthResponse(BaseModel):
     ok: bool = True
     products: int = 0
     model: str
+    provider: str | None = None
     llm_configured: bool = False

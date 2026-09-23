@@ -1,5 +1,9 @@
 # Деплой на VM (Brev, GCP Mumbai)
 
+Текущая VM без GPU — `34.93.3.248`, сайт `https://ekt-assistant.orau.kz`.
+Настройка SGR/OCR/ASR через OpenAI и эмбеддингов/реранкера через NITEC:
+[VM_NITEC.md](VM_NITEC.md). Ниже сохранены инструкции для резервной NVIDIA VM.
+
 ## Локальные embedding и rerank модели на H200
 
 `deploy/vm_models.sh` поднимает два Docker-контейнера vLLM с автозапуском после перезагрузки VM: `intfloat/multilingual-e5-large-instruct` на `127.0.0.1:8891` и `Qwen/Qwen3-Reranker-8B` на `127.0.0.1:8892`. Порты доступны только самой VM. Публичный endpoint виджета и Jupyter не меняются. Модели кэшируются в `~/ekt-model-cache` на диске VM.

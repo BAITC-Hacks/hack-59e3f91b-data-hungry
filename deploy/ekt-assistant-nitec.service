@@ -1,0 +1,16 @@
+[Unit]
+Description=EKT SGR assistant (OpenAI chat/media, NITEC retrieval)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/ekt-current/backend
+ExecStart=/home/ubuntu/ekt-current/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
