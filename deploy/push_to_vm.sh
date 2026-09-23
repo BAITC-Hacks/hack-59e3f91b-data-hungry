@@ -20,7 +20,8 @@ if [ -n "${DUMP_DIR:-}" ]; then
   $SSH "$VM_HOST" "mkdir -p $APP_DIR/backend/data/dump"
   rsync -az -e "$SSH" "$DUMP_DIR/" "$VM_HOST:$APP_DIR/backend/data/dump/"
 fi
-if [ -f "$REPO_DIR/backend/.env" ]; then
+# .env is uploaded only when the VM has none yet (or FORCE_ENV=1): the VM keeps its own PUBLIC_BASE_URL.
+if [ -f "$REPO_DIR/backend/.env" ] && { [ "${FORCE_ENV:-0}" = "1" ] || ! $SSH "$VM_HOST" "test -f $APP_DIR/backend/.env"; }; then
   scp ${VM_PORT:+-P $VM_PORT} -q "$REPO_DIR/backend/.env" "$VM_HOST:$APP_DIR/backend/.env"
 fi
 echo "== setup + run on VM =="
