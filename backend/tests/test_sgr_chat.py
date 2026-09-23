@@ -48,6 +48,18 @@ def test_customer_reply_warns_about_conflicting_catalog_facts():
     assert "160 А" in response["reply"] and "250 А" in response["reply"]
 
 
+def test_snapshot_stock_is_labeled_for_agent_and_customer():
+    note = "остаток по данным на 23.09 10:00 (сайт ekt.kz не ответил вовремя)"
+    card = {"id": 3, "name": "Кабель", "stock_status": "in_stock", "stock_note": note}
+    assert agent._card_for_llm(card)["stock_note"] == note
+    session = Session(id="sgr-stale-stock-test")
+    state = agent.TurnState(session)
+    state.products = [card]
+    response = agent._response(session, "Есть в наличии.", state, cart_updated=False, t0=time.perf_counter())
+    assert note in response["reply"]
+    assert "не подтверждены сейчас" in response["reply"]
+
+
 @pytest.mark.asyncio
 async def test_cart_proposal_requires_customer_request(monkeypatch):
     calls = []
@@ -67,7 +79,7 @@ async def test_cart_proposal_requires_customer_request(monkeypatch):
 @pytest.mark.asyncio
 async def test_sgr_chat_preserves_confirmation_gate(monkeypatch):
     session = Session(id="sgr-test")
-    monkeypatch.setenv("CHAT_AGENT_PROVIDER", "sgr")
+    monkeypatch.setattr(agent.config, "LLM_PROVIDER", "sgr")
     monkeypatch.setenv("OPENAI_API_KEY", "test-only")
 
     async def fake_run_turn(sess, message, attachments, context, state):

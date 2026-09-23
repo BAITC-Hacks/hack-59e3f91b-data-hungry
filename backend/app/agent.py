@@ -405,7 +405,7 @@ def _card_for_llm(card: dict[str, Any], *, full: bool = False) -> dict[str, Any]
     """Compact card for tool results: keeps what the model needs, drops the long tail."""
     out: dict[str, Any] = {
         k: card.get(k)
-        for k in ("id", "name", "article", "brand", "price", "quantity", "in_stock", "stock_status", "url", "kratnost")
+        for k in ("id", "name", "article", "brand", "price", "quantity", "in_stock", "stock_status", "stock_note", "url", "kratnost")
     }
     stores = [f"{s.get('name')}: {s.get('quantity')} шт" for s in card.get("stores") or [] if int(s.get("quantity") or 0) > 0]
     if stores:
@@ -698,6 +698,9 @@ def _response(session: Session, reply: str, state: TurnState | None, *, cart_upd
             caveats.append("Противоречие в данных EKT — " + "; ".join(conflicts[:2]))
         if any(c.get("stock_status") == "unknown" and not c.get("properties") for c in products):
             caveats.append("при недоступности детальной карточки характеристики из названия товара не подтверждены")
+        stale_notes = [str(c["stock_note"]) for c in products if c.get("stock_note")]
+        if stale_notes and not any(note in reply for note in stale_notes):
+            caveats.append("остатки и цены не подтверждены сейчас: " + "; ".join(dict.fromkeys(stale_notes[:2])))
         if caveats:
             if session.lang == "kk":
                 reply = reply.rstrip() + "\n\n**Маңызды:** Тауар деректерінде қайшылық бар немесе толық карточка қолжетімсіз; сипаттамаларды менеджерден нақтылаңыз."
