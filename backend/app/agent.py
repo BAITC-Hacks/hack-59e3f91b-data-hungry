@@ -775,23 +775,26 @@ async def chat(session: Session, message: str, attachments: list[Any], page_url:
 
     state = TurnState(session=session)
 
-    # (b) no credential: keep the button-driven add flow working, explain the rest
-    if not llm_configured():
-        direct = parse_direct_add(message)
-        if direct:
-            try:
-                action = await cart_store.propose(sid, direct)
-                items = ", ".join(f"{i['name']} — {i['qty']} шт (в наличии {i['max_qty']})" for i in action["items"])
-                reply = f"Подтвердите: добавить {items}?"
-            except ValueError as exc:
-                reply = str(exc)
-        else:
-            reply = ("LLM-ассистент пока не настроен: добавьте OPENAI_API_KEY в backend/.env."
-                     if config.LLM_PROVIDER == "sgr" else NO_KEY_REPLY[lang])
+    # (b) widget's "В корзину" is a deterministic backend action, never an LLM/tool call.
+    direct = parse_direct_add(message)
+    if direct:
+        try:
+            action = await cart_store.propose(sid, direct)
+            items = ", ".join(f"{i['name']} — {i['qty']} шт (в наличии {i['max_qty']})" for i in action["items"])
+            reply = f"Подтвердите: добавить {items}?"
+        except ValueError as exc:
+            reply = str(exc)
         record_exchange(session, message, reply)
         return _response(session, reply, state, cart_updated=False, t0=t0)
 
-    # (c) SGR: forced reasoning/action tools, with the existing deterministic cart gate.
+    # (c) no credential: explain why free-form dialogue is unavailable.
+    if not llm_configured():
+        reply = ("LLM-ассистент пока не настроен: добавьте OPENAI_API_KEY в backend/.env."
+                 if config.LLM_PROVIDER == "sgr" else NO_KEY_REPLY[lang])
+        record_exchange(session, message, reply)
+        return _response(session, reply, state, cart_updated=False, t0=t0)
+
+    # (d) SGR: forced reasoning/action tools, with the existing deterministic cart gate.
     context = _context_block(session, lang, page_url or session.page_url, pending)
     provider = llm_provider()
     if provider == "sgr":

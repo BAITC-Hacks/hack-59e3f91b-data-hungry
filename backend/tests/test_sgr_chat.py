@@ -61,6 +61,27 @@ def test_snapshot_stock_is_labeled_for_agent_and_customer():
 
 
 @pytest.mark.asyncio
+async def test_widget_cart_button_bypasses_configured_llm(monkeypatch):
+    session = Session(id="sgr-button-no-llm-0001")
+    monkeypatch.setattr(agent, "llm_configured", lambda: True)
+    monkeypatch.setattr(agent, "llm_provider", lambda: "sgr")
+
+    async def llm_must_not_run(*args, **kwargs):
+        raise AssertionError("cart button called the LLM")
+
+    async def fake_propose(session_id, items):
+        assert session_id == session.id
+        assert items == [{"product_id": 515291, "qty": 2}]
+        return {"items": [{"name": "Тестовый автомат", "qty": 2, "max_qty": 5}]}
+
+    monkeypatch.setattr(sgr_chat, "run_turn", llm_must_not_run)
+    monkeypatch.setattr(agent.cart_store, "propose", fake_propose)
+    result = await agent.chat(session, "Добавь в корзину: Тестовый автомат (id 515291), 2 шт", [], None, "ru")
+    assert result["reply"] == "Подтвердите: добавить Тестовый автомат — 2 шт (в наличии 5)?"
+    assert result["cart_updated"] is False
+
+
+@pytest.mark.asyncio
 async def test_cart_proposal_requires_customer_request(monkeypatch):
     calls = []
 

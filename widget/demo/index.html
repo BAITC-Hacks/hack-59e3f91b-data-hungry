@@ -227,7 +227,14 @@
       });
     });
   </script>
-  <!-- The AI assistant: one tag. data-api = backend base URL, data-open=1 opens the panel on the first visit. -->
-  <script src="../widget.js" data-api="http://localhost:8000" data-open="1"></script>
+  <!-- On the deployed demo, use this page's backend. Port 8765 / file:// keep the documented standalone local preview. -->
+  <script>
+    const widgetScript = document.createElement('script');
+    widgetScript.src = '../widget.js';
+    widgetScript.dataset.api = (location.protocol === 'file:' || location.port === '8765')
+      ? 'http://localhost:8000' : location.origin;
+    widgetScript.dataset.open = '1';
+    document.body.appendChild(widgetScript);
+  </script>
 </body>
 </html>
