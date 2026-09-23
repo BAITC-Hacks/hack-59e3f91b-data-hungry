@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi import FastAPI, Form, HTTPException, Path as PathParam, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -259,6 +259,13 @@ async def certificate_page(cert_id: str) -> Any:
 
 
 # ---- health -----------------------------------------------------------------------------------------------------
+@app.get("/", include_in_schema=False)
+@app.head("/", include_in_schema=False)
+async def root() -> RedirectResponse:
+    """Root of the public host -> demo page (the jury opens the bare domain)."""
+    return RedirectResponse(url="/widget/demo/index.html", status_code=302)
+
+
 @app.get("/api/health", response_model=HealthResponse)
 async def health() -> Any:
     try:
