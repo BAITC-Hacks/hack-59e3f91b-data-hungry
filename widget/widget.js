@@ -524,6 +524,12 @@
     }
     ui.badge.hidden = !(count > 0);
     ui.badge.textContent = count;
+    var demoCartLink = !CONFIG.nativeCart && document.querySelector('[data-demo-cart]');
+    if (demoCartLink) {
+      demoCartLink.href = cartUrl() || '#';
+      var demoCount = demoCartLink.querySelector('[data-demo-count]');
+      if (demoCount) demoCount.textContent = String(count);
+    }
 
     // error banner
     ui.errbar.hidden = !state.error;
@@ -740,8 +746,8 @@
     if (CONFIG.openOnLoad && !restored) state.open = true; // later navigations keep the user's own open/closed choice
     render();
     if (state.open && !isMobile()) ui.textarea.focus();
-    // refresh the cart bar for a returning session (quietly)
-    if (state.sessionId && !state.cart) {
+    // refresh the cart bar for a returning session, including edits made on the cart page
+    if (state.sessionId) {
       apiCart(state.sessionId).then(function (cart) { if (cart && cart.items) { state.cart = cart; render(); save(); } }).catch(function () {});
     }
   }

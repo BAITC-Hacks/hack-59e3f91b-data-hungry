@@ -422,8 +422,7 @@ def _card_for_llm(card: dict[str, Any], *, full: bool = False) -> dict[str, Any]
         detail_current = re.search(r"(\d+(?:[.,]\d+)?)", nominal)
         if title_current and detail_current and title_current.group(1).replace(",", ".") != detail_current.group(1).replace(",", "."):
             out["data_conflict"] = (f"В названии указан ток {title_current.group(1)} А, "
-                                    f"в характеристике «Номинальный ток» — {detail_current.group(1)} А. "
-                                    "Не выбирай одно значение без проверки у менеджера.")
+                                    f"в характеристике «Номинальный ток» — {detail_current.group(1)} А")
     if full and card.get("description"):
         out["description"] = str(card["description"])[:600]
     return out

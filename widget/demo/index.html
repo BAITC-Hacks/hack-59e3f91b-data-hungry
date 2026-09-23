@@ -156,7 +156,7 @@
     <nav class="hdr-icons">
       <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 20V10M12 20V4M19 20v-7"/></svg><span>Сравнить</span></a>
       <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 20.5s-8-4.9-8-11A4.5 4.5 0 0 1 12 7a4.5 4.5 0 0 1 8 2.5c0 6.1-8 11-8 11z"/></svg><span>Избранное</span></a>
-      <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h2l2.5 11h11L21 7H7"/><circle cx="9" cy="20" r="1.5"/><circle cx="17" cy="20" r="1.5"/></svg><i class="cnt">0</i><span>Корзина</span></a>
+      <a href="#" data-demo-cart><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h2l2.5 11h11L21 7H7"/><circle cx="9" cy="20" r="1.5"/><circle cx="17" cy="20" r="1.5"/></svg><i class="cnt" data-demo-count>0</i><span>Демо-корзина</span></a>
     </nav>
   </div></header>
 
@@ -185,7 +185,7 @@
   <!-- On the deployed demo, use this page's backend. Port 8765 / file:// keep the documented standalone local preview. -->
   <script>
     const widgetScript = document.createElement('script');
-    widgetScript.src = '../widget.js?v=20260923-homepage';
+    widgetScript.src = '../widget.js?v=20260923-cart-flow';
     widgetScript.dataset.api = (location.protocol === 'file:' || location.port === '8765')
       ? 'http://localhost:8000' : location.origin;
     document.body.appendChild(widgetScript);

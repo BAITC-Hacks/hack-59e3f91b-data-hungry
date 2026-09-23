@@ -71,7 +71,7 @@ if WIDGET_DIR.is_dir():
 
 @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 async def root() -> RedirectResponse:
-    return RedirectResponse(url="/widget/demo/index.html?v=20260923-no-demo-certificates", status_code=302)
+    return RedirectResponse(url="/widget/demo/index.html?v=20260923-cart-flow", status_code=302)
 
 
 def _check_session_id(session_id: str) -> str:
