@@ -10,7 +10,7 @@ Hackalem AI, кейс №1 ТОО «Электрокомплект». Чат-в�
 Must-have кейса одной строкой: артикул → остаток, характеристики, сертификат · нет на складе → аналог с обоснованием ·
 условия покупки из базы знаний · ничего в корзину без явного «да» и не больше остатка · ссылка на корзину с текущим составом.
 
-**Статус:** прототип, 23.09.2026. Развёрнут на VM Brev: демо-страница с виджетом — http://global.prd.ga.run.brev.nvidia.com:42100/widget/demo/index.html, health — http://global.prd.ga.run.brev.nvidia.com:42100/api/health (LLM: OpenAI gpt-4.1 через OpenAI-совместимый провайдер). Домен orau.kz с HTTPS — по готовности DNS (`deploy/vm_caddy.sh`).
+**Статус:** прототип, 23.09.2026. Развёрнут на VM Brev: демо-страница с виджетом — https://ekt-assistant-ypmkr1h7l.gobrev.dev/widget/demo/index.html, health — https://ekt-assistant-ypmkr1h7l.gobrev.dev/api/health (LLM: OpenAI gpt-4.1 через OpenAI-совместимый провайдер). Домен orau.kz с HTTPS — по готовности DNS (`deploy/vm_caddy.sh`).
 Демо-страница `widget/demo/index.html` имитирует карточку 027228 Legrand с подключённым виджетом.
 
 ## 1. Архитектура
