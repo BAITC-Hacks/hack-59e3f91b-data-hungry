@@ -4,6 +4,8 @@
 
 `deploy/vm_models.sh` поднимает два Docker-контейнера vLLM с автозапуском после перезагрузки VM: `intfloat/multilingual-e5-large-instruct` на `127.0.0.1:8891` и `Qwen/Qwen3-Reranker-8B` на `127.0.0.1:8892`. Порты доступны только самой VM. Публичный endpoint виджета и Jupyter не меняются. Модели кэшируются в `~/ekt-model-cache` на диске VM.
 
+Для оригинальной Qwen3 скрипт использует [шаблон пары Query/Document из vLLM v0.22.1](https://github.com/vllm-project/vllm/blob/v0.22.1/examples/pooling/score/template/qwen3_reranker.jinja). Без него endpoint отвечает, но возвращает неверный порядок товаров.
+
 ```bash
 ssh distinctive-orange-mammal 'bash ~/ekt-assistant/deploy/vm_models.sh'
 ssh distinctive-orange-mammal 'curl -fsS http://127.0.0.1:8891/v1/models && curl -fsS http://127.0.0.1:8892/v1/models'

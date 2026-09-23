@@ -46,11 +46,11 @@ async def inspect(query: str, limit: int, rerank: bool) -> None:
                           "contributions": hit["contributions"], "rerank_score": hit.get("rerank_score")}, ensure_ascii=False))
 
 
-async def evaluate(with_rerank: bool) -> None:
+async def evaluate(with_rerank: bool, models: list[str]) -> None:
     qrels = json.loads(QRELS.read_text(encoding="utf-8"))
     model, ids, matrix = await asyncio.to_thread(hybrid_search._collection)
     ranks: dict[str, list[int | None]] = {name: [] for name in (*PROFILES, "semantic", "fts")}
-    rerank_models = ("BAAI/bge-reranker-v2-m3", "Qwen/Qwen3-Reranker-8B") if with_rerank else ()
+    rerank_models = tuple(models) if with_rerank else ()
     latency_ms: dict[str, list[float]] = {model: [] for model in rerank_models}
     ranks.update({model: [] for model in rerank_models})
     for index, item in enumerate(qrels, 1):
@@ -101,12 +101,14 @@ def main() -> None:
     search_ap.add_argument("--rerank", action="store_true", help="apply one rerank call after hybrid retrieval")
     eval_ap = sub.add_parser("evaluate", help="compare fixed weights on known-item queries")
     eval_ap.add_argument("--rerank", action="store_true", help="also compare NITEC's BGE and Qwen rerankers")
+    eval_ap.add_argument("--rerank-models", nargs="+", default=["BAAI/bge-reranker-v2-m3", "Qwen/Qwen3-Reranker-8B"],
+                         help="rerank model IDs to test (use the locally served model on the VM)")
     args = ap.parse_args()
     ensure_key()
     if args.command == "search":
         asyncio.run(inspect(args.query, max(1, min(args.limit, 100)), args.rerank))
     else:
-        asyncio.run(evaluate(args.rerank))
+        asyncio.run(evaluate(args.rerank, args.rerank_models))
 
 
 if __name__ == "__main__":

@@ -148,9 +148,15 @@ def _filters(category: str | None, brand: str | None, exclude_id: int | None, al
         sql += f" AND ({alias}.brand = ? OR {alias}.name_norm LIKE ?)"
         params += [canon, f"%{normalize_text(brand)}%"]
     if category:
-        c = category.strip().lower()
-        sql += f" AND ({alias}.cat1 = ? OR {alias}.cat2 = ? OR {alias}.cat3 = ? OR {alias}.cat LIKE ?)"
-        params += [c, c, c, f"%{c}%"]
+        c = normalize_text(category)
+        # Tool callers often say "светильники" while Bitrix stores
+        # "svetilniki_lampy". Match both the supplied slug and its
+        # transliterated form so a natural-language category does not hide
+        # otherwise relevant products.
+        slug = re.sub(r"[^a-z0-9]+", "_", slugify(c)).strip("_")
+        sql += (f" AND ({alias}.cat1 = ? OR {alias}.cat2 = ? OR {alias}.cat3 = ? "
+                f"OR {alias}.cat LIKE ? OR {alias}.cat LIKE ?)")
+        params += [c, c, c, f"%{c}%", f"%{slug}%"]
     if exclude_id is not None:
         sql += f" AND {alias}.id != ?"
         params.append(int(exclude_id))

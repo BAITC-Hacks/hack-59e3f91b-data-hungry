@@ -43,6 +43,12 @@ def test_fts_scored_returns_bm25_and_honors_filter() -> None:
     assert [row["rank"] for row in rows] == sorted(row["rank"] for row in rows)
 
 
+@pytest.mark.skipif(not config.DB_PATH.exists(), reason="catalog index missing")
+def test_natural_language_category_matches_bitrix_slug() -> None:
+    assert 19983 in catalog.filtered_product_ids(category="светильники")
+    assert 19983 in catalog.filtered_product_ids(category="Светильники / Лампы")
+
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(not config.DB_PATH.exists(), reason="catalog index missing")
 async def test_search_falls_back_to_lexical_without_key(monkeypatch) -> None:

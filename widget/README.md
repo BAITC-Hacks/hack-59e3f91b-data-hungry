@@ -57,12 +57,11 @@ cd widget && python3 -m http.server 8765
 # open http://localhost:8765/demo/index.html  (backend expected on http://localhost:8000)
 ```
 
-`demo/index.html` imitates the ekt.kz product page of 027228 Legrand: blue top bar (city, phones, «Личный кабинет»,
-«B2B - EKT PRO», «Оставить заявку», «КАЗ»), white header with the logo, blue-outline «Каталог», search, «Сравнить /
-Избранное / Корзина», breadcrumbs, H1, photo, «Цена на сайте / Цена в магазине», yellow «Купить», «Купить в 1 клик»,
-payment logos, «Оплата и доставка», tabs «Описание / Характеристики», and a mock WhatsApp button mid-right. Check it on
-desktop and in the DevTools mobile emulator. With the backend down the widget shows a red
-"Не удалось отправить — Повторить" banner.
+`demo/index.html` imitates the EKT home page with catalog categories, example products linked to real `ekt.kz` cards,
+and the assistant launcher at bottom right. Its search bar sends a query to the assistant. The former product-page
+demo remains at `demo/product.html`. Both pages are clearly labelled as demos; loading this widget on the actual
+`ekt.kz` site requires adding the script tag there (or using the bookmarklet for a personal preview). With the backend
+down the widget shows a red "Не удалось отправить — Повторить" banner.
 
 ## Bookmarklet (run the widget on the live ekt.kz)
 
