@@ -129,6 +129,9 @@ def test_root_redirects_to_demo(client):
     r = client.get("/", follow_redirects=False)
     assert r.status_code == 302
     assert r.headers["location"] == "/widget/demo/index.html"
+    head = client.head("/", follow_redirects=False)
+    assert head.status_code == 302
+    assert head.headers["location"] == "/widget/demo/index.html"
 
 
 def test_search_and_product(client):

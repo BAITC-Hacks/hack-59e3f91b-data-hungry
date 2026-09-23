@@ -68,7 +68,7 @@ if WIDGET_DIR.is_dir():
     app.mount("/widget", StaticFiles(directory=str(WIDGET_DIR)), name="widget")
 
 
-@app.get("/", include_in_schema=False)
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 async def root() -> RedirectResponse:
     return RedirectResponse(url="/widget/demo/index.html", status_code=302)
 
