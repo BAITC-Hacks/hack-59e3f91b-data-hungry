@@ -1,6 +1,16 @@
 .env
 .env.*
 !.env.example
-data/
+/data/
 __pycache__/
 *.pyc
+.venv/
+.pytest_cache/
+backend/.env
+backend/data/catalog.sqlite
+backend/data/catalog.sqlite-journal
+backend/data/dump/
+backend/data/uploads/
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Корзина — AI-ассистент ekt.kz</title>
+<style>
+  :root { --brand: #0b3d91; --brand-2: #1565c0; --accent: #ff8f00; --bg: #f4f6fa; --card: #fff; --text: #1c2433; --muted: #6b7280; --line: #e5e9f0; --ok: #1b8a3c; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }
+  header { background: var(--brand); color: #fff; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 16px; }
+  header .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; gap: 12px; }
+  .logo { font-weight: 800; font-size: 20px; letter-spacing: .3px; text-decoration: none; color: #fff; display: flex; align-items: center; gap: 8px; }
+  .logo span { color: var(--accent); }
+  .badge { font-size: 12px; background: rgba(255,255,255,.15); padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
+  main { padding: 24px 0 48px; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  .note { color: var(--muted); font-size: 14px; margin: 0 0 18px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 12px 14px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: middle; font-size: 14px; }
+  th { background: #fafbfd; color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  .item { display: flex; align-items: center; gap: 12px; }
+  .item img { width: 48px; height: 48px; object-fit: contain; border: 1px solid var(--line); border-radius: 8px; background: #fff; flex: none; }
+  .item a { color: var(--brand-2); text-decoration: none; font-weight: 600; }
+  .item a:hover { text-decoration: underline; }
+  .art { color: var(--muted); font-size: 12px; }
+  .rm { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 12px; }
+  .rm:hover { color: #b91c1c; border-color: #fca5a5; }
+  tfoot td { font-weight: 700; font-size: 16px; border-bottom: none; background: #fafbfd; }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 18px; }
+  .btn { display: inline-block; background: var(--accent); color: #fff; font-weight: 700; padding: 12px 20px; border-radius: 10px; text-decoration: none; }
+  .btn.secondary { background: #fff; color: var(--brand-2); border: 1px solid var(--line); font-weight: 600; }
+  .empty { padding: 40px 16px; text-align: center; color: var(--muted); }
+  .proto { margin-top: 20px; font-size: 13px; color: var(--muted); background: #fff8e6; border: 1px solid #ffe2a8; border-radius: 10px; padding: 12px 14px; }
+  @media (max-width: 640px) {
+    thead { display: none; }
+    tr { display: block; border-bottom: 1px solid var(--line); padding: 10px 0; }
+    td { display: flex; justify-content: space-between; border: none; padding: 6px 14px; }
+    td::before { content: attr(data-label); color: var(--muted); font-size: 12px; margin-right: 12px; }
+    td.item-cell::before { display: none; }
+    tfoot tr { display: flex; }
+    tfoot td { flex: 1; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a class="logo" href="{{ site }}">⚡ Электро<span>Комплект</span></a>
+    <span class="badge">Корзина AI-ассистента · прототип</span>
+  </div>
+</header>
+<main>
+  <div class="wrap">
+    <h1>Ваша корзина</h1>
+    <p class="note">Собрана ассистентом в чате после вашего подтверждения. Количества проверены по остаткам на складах.</p>
+
+    <div class="card">
+    {% if cart['items'] %}
+      <table>
+        <thead>
+          <tr><th>Товар</th><th class="num">Кол-во</th><th class="num">Цена</th><th class="num">Сумма</th><th></th></tr>
+        </thead>
+        <tbody>
+        {% for it in cart['items'] %}
+          <tr id="row-{{ it.product_id }}">
+            <td class="item-cell">
+              <div class="item">
+                {% if it.image %}<img src="{{ it.image }}" alt="">{% endif %}
+                <div>
+                  {% if it.url %}<a href="{{ it.url }}" target="_blank" rel="noopener">{{ it.name }}</a>{% else %}<b>{{ it.name }}</b>{% endif %}
+                  <div class="art">Артикул: {{ it.article or '—' }} · id {{ it.product_id }}</div>
+                </div>
+              </div>
+            </td>
+            <td class="num" data-label="Кол-во">{{ it.qty }} шт</td>
+            <td class="num" data-label="Цена">{{ it.price | money }}</td>
+            <td class="num" data-label="Сумма">{{ it.sum | money }}</td>
+            <td class="num"><button class="rm" data-pid="{{ it.product_id }}" type="button">Удалить</button></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr><td colspan="3">Итого ({{ cart['count'] }} поз.)</td><td class="num">{{ cart['total'] | money }}</td><td></td></tr>
+        </tfoot>
+      </table>
+    {% else %}
+      <div class="empty">Корзина пуста. Попросите ассистента подобрать товар и подтвердите добавление.</div>
+    {% endif %}
+    </div>
+
+    <div class="actions">
+      <a class="btn" href="{{ checkout_url }}" target="_blank" rel="noopener">Оформить заказ на ekt.kz →</a>
+      <a class="btn secondary" href="{{ site }}/catalog/" target="_blank" rel="noopener">Продолжить покупки</a>
+    </div>
+    <div class="proto">
+      Это прототип корзины AI-ассистента (сессия <code>{{ session_id }}</code>). Цены указаны в тенге по данным API ekt.kz на момент
+      подтверждения; при оформлении на сайте товары добавляются в настоящую корзину ekt.kz. Позиции с пометкой «цена по запросу» уточнит менеджер.
+    </div>
+  </div>
+</main>
+<script>
+  document.querySelectorAll('button.rm').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      btn.disabled = true;
+      try {
+        const r = await fetch('/api/cart/{{ session_id }}/items/' + btn.dataset.pid, { method: 'DELETE' });
+        if (r.ok) location.reload(); else btn.disabled = false;
+      } catch (e) { btn.disabled = false; }
+    });
+  });
+</script>
+</body>
+</html>
