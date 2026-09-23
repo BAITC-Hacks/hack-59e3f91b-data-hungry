@@ -42,7 +42,9 @@ Accepted: jpg/jpeg/png/webp/gif/bmp/tif/tiff; xlsx/xlsm/xls; docx/doc; pptx/ppt;
 ```json
 { "attachment_id": "att_...", "filename": "spec.xlsx", "kind": "image|excel|word|pdf|document|audio", "summary": "12 строк, найдено 9 артикулов", "session_id": "uuid" }
 ```
-Pass the returned `session_id` and `attachment_ids` in the next `/api/chat` call. Attachments from another session are rejected with HTTP 404. Original bytes and extracted text are cached in `backend/data/attachments.sqlite3` by SHA-256 and file kind; a repeated upload does not call OCR/ASR again. Image and scanned-PDF OCR use `datalab-to/chandra-ocr-2`; audio uses `openai/whisper-large-v3-turbo` through `llm.nitec.kz`. Without `NITEC_API_KEY`, images remain available to the main vision-capable agent, while audio transcription and scanned-PDF OCR are unavailable.
+Pass the returned `session_id` and `attachment_ids` in the next `/api/chat` call. Attachments from another session are rejected with HTTP 404. Original bytes and extracted text are cached in `backend/data/attachments.sqlite3` by SHA-256, file kind and processor/model signature; repeated uploads do not call OCR/ASR again. `MEDIA_AI_PROVIDER=openai` (default) uses `gpt-5.6-luna` for image/scanned-PDF text and `gpt-transcribe` for audio; it requires `OPENAI_API_KEY`. `MEDIA_AI_PROVIDER=nitec` uses Chandra OCR and Whisper through `llm.nitec.kz` and requires `NITEC_API_KEY`. OpenAI OCR does not return verified bounding boxes. Without the selected provider key, images remain available to the main vision-capable agent, while audio transcription and scanned-PDF OCR are unavailable.
+
+For local testing only, set `ENABLE_FILE_LAB=1` and bind the backend to `127.0.0.1`. `GET /lab` serves a simple upload page. `POST /api/lab/parse` accepts the same `file` form field and returns `filename`, `kind`, `summary`, `text`, `lines`, `boxes`, `processor`, `sha256`. Both routes reject non-loopback clients and are disabled by default.
 
 ## GET /api/cart/{session_id}  -> `cart` object (see above)
 ## DELETE /api/cart/{session_id}/items/{product_id} -> `cart` object

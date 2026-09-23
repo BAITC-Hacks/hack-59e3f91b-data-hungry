@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Лаборатория файлов — EKT</title>
+  <style>
+    :root { font: 16px/1.5 system-ui, -apple-system, sans-serif; color: #17212b; background: #f5f7fa; }
+    * { box-sizing: border-box; }
+    body { max-width: 980px; margin: 0 auto; padding: 28px 18px 60px; }
+    h1 { margin: 0 0 6px; font-size: clamp(1.6rem, 4vw, 2.3rem); }
+    .hint { color: #53616f; margin: 0 0 24px; }
+    .panel, .result { background: white; border: 1px solid #dbe2e9; border-radius: 14px; padding: 22px; box-shadow: 0 4px 20px #17212b0b; }
+    .drop { display: block; padding: 28px; border: 2px dashed #9db0c2; border-radius: 10px; text-align: center; cursor: pointer; background: #fafcff; }
+    .drop.drag { border-color: #1455ae; background: #edf5ff; }
+    input[type=file] { width: 100%; max-width: 450px; }
+    button { margin-top: 16px; border: 0; border-radius: 9px; padding: 10px 18px; color: white; background: #1455ae; font: inherit; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: wait; }
+    .status { margin: 14px 0 0; min-height: 1.5em; color: #53616f; }
+    .status.error { color: #b42318; }
+    .results { display: grid; gap: 16px; margin-top: 24px; }
+    .result h2 { margin: 0 0 4px; font-size: 1.15rem; overflow-wrap: anywhere; }
+    .meta { color: #53616f; font-size: .9rem; overflow-wrap: anywhere; }
+    .warning { color: #a15c00; }
+    .tabs { display: flex; gap: 8px; margin: 14px 0; flex-wrap: wrap; }
+    .tabs button { margin: 0; padding: 6px 12px; color: #24415c; background: #e9f0f8; }
+    .tabs button.active { color: white; background: #1455ae; }
+    pre { margin: 0; padding: 16px; max-height: 520px; overflow: auto; background: #f5f7fa; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 ui-monospace, SFMono-Regular, monospace; }
+    @media (max-width: 600px) { body { padding: 18px 12px; } .panel, .result { padding: 16px; } }
+  </style>
+</head>
+<body>
+  <h1>Лаборатория распознавания файлов</h1>
+  <p class="hint">Загрузите фото, PDF, Word, Excel или аудио. Здесь виден результат парсера до передачи в чат. Фото, сканы и аудио отправляются выбранному AI-провайдеру; Office-файлы сначала разбираются локально.</p>
+  <form id="form" class="panel">
+    <label id="drop" class="drop" for="files">Выберите файлы или перетащите их сюда<br><small>До 15 МБ каждый · PNG/JPEG, PDF, DOCX, XLSX, аудио и другие поддерживаемые форматы</small></label>
+    <p><input id="files" name="files" type="file" multiple accept=".jpg,.jpeg,.png,.webp,.gif,.bmp,.tif,.tiff,.pdf,.docx,.doc,.xlsx,.xlsm,.xls,.pptx,.ppt,.odt,.ods,.odp,.txt,.md,.csv,.mp3,.wav,.m4a,.ogg,.oga,.flac,.webm,.weba,.mp4,.mpeg,.mpga"></p>
+    <button id="submit" type="submit">Распознать</button>
+    <p id="status" class="status" role="status"></p>
+  </form>
+  <div id="results" class="results" aria-live="polite"></div>
+  <script>
+    const form = document.querySelector('#form');
+    const input = document.querySelector('#files');
+    const drop = document.querySelector('#drop');
+    const status = document.querySelector('#status');
+    const submit = document.querySelector('#submit');
+    const results = document.querySelector('#results');
+    let droppedFiles = null;
+
+    for (const eventName of ['dragenter', 'dragover']) {
+      drop.addEventListener(eventName, event => { event.preventDefault(); drop.classList.add('drag'); });
+    }
+    for (const eventName of ['dragleave', 'drop']) {
+      drop.addEventListener(eventName, event => { event.preventDefault(); drop.classList.remove('drag'); });
+    }
+    drop.addEventListener('drop', event => {
+      droppedFiles = event.dataTransfer.files;
+      drop.firstChild.textContent = `${droppedFiles.length} файл(ов) выбрано`;
+    });
+    input.addEventListener('change', () => { droppedFiles = null; });
+
+    function showResult(data) {
+      const card = document.createElement('article');
+      card.className = 'result';
+      const title = document.createElement('h2');
+      title.textContent = data.filename;
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = `${data.kind} · ${data.processor} · SHA-256: ${data.sha256.slice(0, 12)}…`;
+      const summary = document.createElement('p');
+      summary.textContent = data.summary || 'Нет сводки';
+      if (!data.text) summary.className = 'warning';
+      const tabs = document.createElement('div');
+      tabs.className = 'tabs';
+      const output = document.createElement('pre');
+      const views = {
+        'Текст': data.text || '(текст не извлечён)',
+        'Строки спецификации': JSON.stringify(data.lines, null, 2),
+        'Координаты': JSON.stringify(data.boxes, null, 2),
+      };
+      Object.entries(views).forEach(([label, value], index) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = label;
+        if (index === 0) { button.className = 'active'; output.textContent = value; }
+        button.addEventListener('click', () => {
+          tabs.querySelectorAll('button').forEach(item => item.classList.remove('active'));
+          button.classList.add('active');
+          output.textContent = value;
+        });
+        tabs.append(button);
+      });
+      card.append(title, meta, summary, tabs, output);
+      results.prepend(card);
+    }
+
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      const files = [...(droppedFiles || input.files)];
+      if (!files.length) { status.textContent = 'Выберите хотя бы один файл.'; return; }
+      submit.disabled = true;
+      status.classList.remove('error');
+      for (let index = 0; index < files.length; index++) {
+        const file = files[index];
+        status.textContent = `Обработка ${index + 1}/${files.length}: ${file.name}…`;
+        try {
+          const body = new FormData();
+          body.append('file', file);
+          const response = await fetch('/api/lab/parse', { method: 'POST', body });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+          showResult(data);
+        } catch (error) {
+          status.classList.add('error');
+          const card = document.createElement('article');
+          card.className = 'result warning';
+          card.textContent = `${file.name}: ${error.message}`;
+          results.prepend(card);
+        }
+      }
+      status.textContent = `Готово: ${files.length} файл(ов).`;
+      submit.disabled = false;
+    });
+  </script>
+</body>
+</html>
