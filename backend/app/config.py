@@ -32,6 +32,6 @@ LLM_FALLBACKS = os.getenv("LLM_FALLBACKS", "1").lower() not in ("0", "false", "n
 
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
 
-DETAIL_CACHE_TTL = int(os.getenv("DETAIL_CACHE_TTL", "300"))  # seconds; stock changes, keep it short
+DETAIL_CACHE_TTL = int(os.getenv("DETAIL_CACHE_TTL", "900"))  # seconds for display; cart confirmation always re-checks live (ttl=0)
 MAX_UPLOAD_MB = 15
 ENABLE_FILE_LAB = os.getenv("ENABLE_FILE_LAB", "0") == "1"
