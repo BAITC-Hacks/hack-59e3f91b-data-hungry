@@ -11,11 +11,11 @@ from typing import Any
 
 from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import agent, attachments, catalog, certificates, config, ekt_api
+from . import agent, attachments, catalog, certificates, config, ekt_api, recognition
 from .cart import PendingActionError, cart_store
 from .schemas import (
     Cart,
@@ -131,8 +131,7 @@ async def post_confirm(req: ConfirmRequest) -> Any:
 
 
 # ---- uploads ----------------------------------------------------------------------------------------------------
-@app.post("/api/upload", response_model=UploadResponse)
-async def post_upload(file: UploadFile, session_id: str | None = Form(default=None)) -> Any:
+async def _read_upload(file: UploadFile) -> tuple[str, bytes, str]:
     filename = Path(file.filename or "file").name
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in ALLOWED_EXTENSIONS:
@@ -144,11 +143,47 @@ async def post_upload(file: UploadFile, session_id: str | None = Form(default=No
     if not content:
         raise HTTPException(status_code=400, detail="Пустой файл")
     mime = file.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    return filename, content, mime
+
+
+@app.post("/api/upload", response_model=UploadResponse)
+async def post_upload(file: UploadFile, session_id: str | None = Form(default=None)) -> Any:
+    filename, content, mime = await _read_upload(file)
     session = session_store.get_or_create(session_id)
     att = await attachments.save_and_parse(filename, content, mime, session.id)
     log.info("upload %s kind=%s bytes=%d -> %s", filename, att.kind, len(content), att.id)
     return {"attachment_id": att.id, "filename": att.filename, "kind": att.kind,
             "summary": att.summary or "", "session_id": session.id}
+
+
+def _require_local_file_lab(request: Request) -> None:
+    host = request.client.host if request.client else ""
+    url_host = request.url.hostname
+    local_host = url_host in {"127.0.0.1", "localhost", "::1"}
+    if host == "testclient" and url_host == "testserver":
+        local_host = True
+    origin = request.headers.get("origin")
+    same_origin = not origin or origin.rstrip("/") == str(request.base_url).rstrip("/")
+    if not config.ENABLE_FILE_LAB or host not in {"127.0.0.1", "::1", "testclient"} or not local_host or not same_origin:
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+@app.get("/lab", response_class=FileResponse)
+async def file_lab(request: Request) -> Any:
+    """Local-only upload playground; intentionally disabled in deployments."""
+    _require_local_file_lab(request)
+    return FileResponse(TEMPLATES_DIR / "file_lab.html", media_type="text/html")
+
+
+@app.post("/api/lab/parse")
+async def file_lab_parse(request: Request, file: UploadFile) -> Any:
+    _require_local_file_lab(request)
+    filename, content, mime = await _read_upload(file)
+    session = session_store.get_or_create(None)
+    att = await attachments.save_and_parse(filename, content, mime, session.id)
+    return {"filename": att.filename, "kind": att.kind, "summary": att.summary,
+            "text": att.text, "lines": att.lines, "boxes": att.boxes,
+            "processor": recognition.cache_signature(att.kind), "sha256": att.sha256}
 
 
 # ---- cart -------------------------------------------------------------------------------------------------------

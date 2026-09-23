@@ -23,6 +23,7 @@ def local_data(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr(config, "ATTACHMENT_DB_PATH", tmp_path / "attachments.sqlite3")
     monkeypatch.setenv("NITEC_API_KEY", "test-only")
+    monkeypatch.setenv("MEDIA_AI_PROVIDER", "nitec")
 
 
 @pytest.mark.asyncio
@@ -48,10 +49,10 @@ async def test_same_image_recognized_once_and_persisted(monkeypatch):
     assert "Автомат 16А" in attachments.text_for_llm(two)
     assert attachments.get_attachment(one.id, "session-b") is None
     assert attachments.get_attachment(one.id, "session-a") is one
-    cached = attachment_cache.get(one.sha256, "image")
+    cached = attachment_cache.get(one.sha256, "image", "media-v1:nitec:datalab-to/chandra-ocr-2")
     assert cached is not None and cached["raw"] == raw and cached["text"] == "Автомат 16А"
     with sqlite3.connect(config.ATTACHMENT_DB_PATH) as db:
-        assert db.execute("SELECT count(*) FROM parsed_files").fetchone()[0] == 1
+        assert db.execute("SELECT count(*) FROM parsed_files_v2").fetchone()[0] == 1
 
 
 @pytest.mark.asyncio
@@ -84,4 +85,4 @@ async def test_scanned_pdf_uses_ocr(monkeypatch):
     att = await attachments.save_and_parse("scan.pdf", raw, "application/pdf", "session-a")
     assert "027228" in att.text
     assert att.boxes[0]["page"] == 1
-    assert attachment_cache.get(att.sha256, "pdf")["text"] == att.text
+    assert attachment_cache.get(att.sha256, "pdf", "media-v1:nitec:datalab-to/chandra-ocr-2")["text"] == att.text

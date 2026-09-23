@@ -31,3 +31,4 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("
 
 DETAIL_CACHE_TTL = int(os.getenv("DETAIL_CACHE_TTL", "300"))  # seconds; stock changes, keep it short
 MAX_UPLOAD_MB = 15
+ENABLE_FILE_LAB = os.getenv("ENABLE_FILE_LAB", "0") == "1"

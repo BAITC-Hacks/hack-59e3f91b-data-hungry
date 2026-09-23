@@ -20,9 +20,10 @@ def _connect() -> sqlite3.Connection:
     db = sqlite3.connect(path, timeout=30)
     db.row_factory = sqlite3.Row
     db.execute("""
-        CREATE TABLE IF NOT EXISTS parsed_files (
+        CREATE TABLE IF NOT EXISTS parsed_files_v2 (
             sha256 TEXT NOT NULL,
             kind TEXT NOT NULL,
+            processor_signature TEXT NOT NULL,
             raw BLOB NOT NULL,
             stored_bytes BLOB NOT NULL,
             stored_suffix TEXT NOT NULL,
@@ -34,15 +35,16 @@ def _connect() -> sqlite3.Connection:
             width INTEGER NOT NULL DEFAULT 0,
             height INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (sha256, kind)
+            PRIMARY KEY (sha256, kind, processor_signature)
         )
     """)
     return db
 
 
-def get(sha256: str, kind: str) -> dict[str, Any] | None:
+def get(sha256: str, kind: str, processor_signature: str) -> dict[str, Any] | None:
     with closing(_connect()) as db:
-        row = db.execute("SELECT * FROM parsed_files WHERE sha256=? AND kind=?", (sha256, kind)).fetchone()
+        row = db.execute("SELECT * FROM parsed_files_v2 WHERE sha256=? AND kind=? AND processor_signature=?",
+                         (sha256, kind, processor_signature)).fetchone()
         if row is None:
             return None
         result = dict(row)
@@ -51,14 +53,14 @@ def get(sha256: str, kind: str) -> dict[str, Any] | None:
         return result
 
 
-def put(sha256: str, kind: str, raw: bytes, stored_bytes: bytes, stored_suffix: str,
+def put(sha256: str, kind: str, processor_signature: str, raw: bytes, stored_bytes: bytes, stored_suffix: str,
         text: str, lines: list[dict], boxes: list[dict], summary: str,
         mime: str, width: int, height: int) -> None:
     with closing(_connect()) as db, db:
         db.execute("""
-            INSERT OR IGNORE INTO parsed_files
-                (sha256,kind,raw,stored_bytes,stored_suffix,text,lines_json,boxes_json,summary,mime,width,height)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-        """, (sha256, kind, raw, stored_bytes, stored_suffix, text,
+            INSERT OR IGNORE INTO parsed_files_v2
+                (sha256,kind,processor_signature,raw,stored_bytes,stored_suffix,text,lines_json,boxes_json,summary,mime,width,height)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (sha256, kind, processor_signature, raw, stored_bytes, stored_suffix, text,
               json.dumps(lines, ensure_ascii=False), json.dumps(boxes, ensure_ascii=False),
               summary, mime, width, height))

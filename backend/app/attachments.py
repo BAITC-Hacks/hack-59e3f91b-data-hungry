@@ -6,7 +6,7 @@ each row into a ``line`` (``{'raw', 'article', 'name', 'qty'}``) so the chat lay
 position up in the catalog. Images are validated with Pillow, re-encoded as JPEG (max side 1568 px) and
 exposed as an Anthropic image content block for vision.
 
-The per-session registry is in-memory; extracted results are cached in SQLite by SHA-256.
+The per-session registry is in-memory; extracted results are cached in SQLite by SHA-256 and processor.
 """
 from __future__ import annotations
 
@@ -120,14 +120,15 @@ async def save_and_parse(filename: str, content: bytes, mime: str, session_id: s
     att_id = "att_" + uuid.uuid4().hex[:12]
     safe_name = re.sub(r"[^\w.\-]+", "_", Path(filename.replace("\\", "/")).name, flags=re.UNICODE)[:120] or "file"
     digest = hashlib.sha256(content).hexdigest()
+    processor_signature = recognition.cache_signature(kind)
     upload_dir = Path(config.UPLOAD_DIR)
     upload_dir.mkdir(parents=True, exist_ok=True)
     path = upload_dir / f"{digest}{Path(safe_name).suffix.lower()}"
     att = Attachment(id=att_id, filename=Path(safe_name).name, kind=kind, path=path, mime=mime or "",
                      sha256=digest, session_id=session_id)
-    lock = _hash_locks.setdefault(f"{digest}:{kind}", asyncio.Lock())
+    lock = _hash_locks.setdefault(f"{digest}:{kind}:{processor_signature}", asyncio.Lock())
     async with lock:
-        cached = await asyncio.to_thread(attachment_cache.get, digest, kind)
+        cached = await asyncio.to_thread(attachment_cache.get, digest, kind, processor_signature)
         if cached:
             att.path = upload_dir / f"{digest}{cached['stored_suffix']}"
             if not att.path.exists():
@@ -144,7 +145,7 @@ async def save_and_parse(filename: str, content: bytes, mime: str, session_id: s
             if att.text.strip():
                 stored_bytes = await asyncio.to_thread(att.path.read_bytes)
                 await asyncio.to_thread(
-                    attachment_cache.put, digest, kind, content, stored_bytes, att.path.suffix,
+                    attachment_cache.put, digest, kind, processor_signature, content, stored_bytes, att.path.suffix,
                     att.text, att.lines, att.boxes, att.summary, att.mime, att.width, att.height,
                 )
     _registry[att_id] = att

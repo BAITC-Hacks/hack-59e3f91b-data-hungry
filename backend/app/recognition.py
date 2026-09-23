@@ -6,7 +6,7 @@ import io
 import os
 from pathlib import Path
 
-from . import extractor, ocr, transcription
+from . import config, extractor, ocr, openai_media, transcription
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
 SUPPORTED_EXTS = extractor.SUPPORTED_EXTS | transcription.AUDIO_EXTS | IMAGE_EXTS
@@ -21,8 +21,49 @@ def _nitec() -> tuple[str, str]:
     return base, key
 
 
+def _provider() -> str:
+    provider = os.getenv("MEDIA_AI_PROVIDER", "openai").strip().lower()
+    if provider not in {"openai", "nitec"}:
+        raise ValueError("MEDIA_AI_PROVIDER must be openai or nitec")
+    return provider
+
+
+def _openai() -> tuple[str, str]:
+    base = os.getenv("OPENAI_API_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+    key = os.getenv("OPENAI_API_KEY", "")
+    if not key:
+        raise RuntimeError("OPENAI_API_KEY is required for OCR or transcription")
+    return base, key
+
+
+def cache_signature(kind: str) -> str:
+    """Keep cached text separate when the processor or model changes."""
+    if kind not in {"image", "pdf", "audio"}:
+        return "local-v2"
+    provider = _provider()
+    if kind == "audio":
+        model = (os.getenv("OPENAI_ASR_MODEL", openai_media.ASR_MODEL) if provider == "openai"
+                 else os.getenv("NITEC_ASR_MODEL", transcription._MODEL))
+    else:
+        model = (os.getenv("OPENAI_OCR_MODEL", openai_media.OCR_MODEL) if provider == "openai"
+                 else os.getenv("NITEC_OCR_MODEL", ocr._MODEL))
+    return f"media-v1:{provider}:{model}"
+
+
+async def _ocr(image: bytes) -> tuple[str, list[dict]]:
+    if _provider() == "openai":
+        base, key = _openai()
+        text = await openai_media.ocr_image(
+            image, base, key, os.getenv("OPENAI_OCR_MODEL", openai_media.OCR_MODEL)
+        )
+        return text, []
+    base, key = _nitec()
+    boxes = await ocr.ocr_image(image, base, key, os.getenv("NITEC_OCR_MODEL", ocr._MODEL))
+    return "\n".join(box["text"] for box in boxes), boxes
+
+
 def _image_for_ocr(data: bytes) -> bytes:
-    """Normalize BMP/TIFF and EXIF rotation before sending to Chandra."""
+    """Normalize image formats and EXIF rotation before OCR."""
     from PIL import Image, ImageOps
 
     with Image.open(io.BytesIO(data)) as source:
@@ -55,7 +96,8 @@ def _pdf_native_and_scans(data: bytes) -> tuple[dict[int, str], list[dict], list
                                 round(100 * x1 / page.rect.width, 2), round(100 * y1 / page.rect.height, 2)],
                     })
             elif len(scans) < MAX_OCR_PAGES:
-                pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+                scale = min(3.0, 2500 / max(page.rect.width, page.rect.height))
+                pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
                 scans.append((index + 1, pix.tobytes("jpeg")))
             else:
                 texts[index + 1] = f"Страница {index + 1}: [OCR пропущен: лимит {MAX_OCR_PAGES} страниц]"
@@ -67,26 +109,29 @@ async def extract_file(data: bytes, filename: str) -> tuple[str, list[dict]]:
     if ext == ".pdf":
         texts, boxes, scans = await asyncio.to_thread(_pdf_native_and_scans, data)
         if scans:
-            base, key = _nitec()
             for page, image in scans:
-                page_boxes = await ocr.ocr_image(image, base, key, os.getenv("NITEC_OCR_MODEL", ocr._MODEL))
-                if not page_boxes:
+                page_text, page_boxes = await _ocr(image)
+                if not page_text.strip():
                     raise ValueError(f"OCR returned no text for PDF page {page}")
-                texts[page] = f"Страница {page}:\n" + "\n".join(b["text"] for b in page_boxes)
+                texts[page] = f"Страница {page}:\n{page_text}"
                 boxes.extend({**box, "page": page} for box in page_boxes)
         return "\n\n".join(texts[page] for page in sorted(texts)).strip(), boxes
 
     if ext in IMAGE_EXTS:
-        base, key = _nitec()
         image = await asyncio.to_thread(_image_for_ocr, data)
-        boxes = await ocr.ocr_image(image, base, key, os.getenv("NITEC_OCR_MODEL", ocr._MODEL))
-        return "\n".join(box["text"] for box in boxes), boxes
+        return await _ocr(image)
 
     if ext in transcription.AUDIO_EXTS:
-        base, key = _nitec()
-        text = await transcription.transcribe_audio(
-            data, filename, base, key, os.getenv("NITEC_ASR_MODEL", transcription._MODEL)
-        )
+        if _provider() == "openai":
+            base, key = _openai()
+            text = await openai_media.transcribe_audio(
+                data, filename, base, key, os.getenv("OPENAI_ASR_MODEL", openai_media.ASR_MODEL)
+            )
+        else:
+            base, key = _nitec()
+            text = await transcription.transcribe_audio(
+                data, filename, base, key, os.getenv("NITEC_ASR_MODEL", transcription._MODEL)
+            )
         return text, []
 
     if ext in extractor.SUPPORTED_EXTS:
