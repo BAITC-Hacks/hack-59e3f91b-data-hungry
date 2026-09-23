@@ -54,7 +54,7 @@ async def lifespan(_: FastAPI):
         log.info("catalog ready: %s products", catalog.count_products())
     except RuntimeError as exc:
         log.warning("catalog DB not available: %s", exc)
-    log.info("LLM model=%s effort=%s configured=%s", config.LLM_MODEL, config.LLM_EFFORT, agent.llm_configured())
+    log.info("LLM provider=%s model=%s effort=%s configured=%s", agent.llm_provider(), config.LLM_MODEL, config.LLM_EFFORT, agent.llm_configured())
     yield
 
 
@@ -265,4 +265,4 @@ async def health() -> Any:
         products = catalog.count_products()
     except Exception:
         products = 0
-    return {"ok": True, "products": products, "model": config.LLM_MODEL, "llm_configured": agent.llm_configured()}
+    return {"ok": True, "products": products, "model": config.LLM_MODEL, "provider": agent.llm_provider(), "llm_configured": agent.llm_configured()}

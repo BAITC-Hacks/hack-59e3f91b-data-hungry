@@ -23,6 +23,7 @@ class Session:
     last_products: list[dict[str, Any]] = field(default_factory=list)
     page_url: str | None = None
     sdk_session_id: str | None = None  # Claude Code session to resume (claude_code provider)
+    oa_messages: list[dict[str, Any]] = field(default_factory=list)  # OpenAI-format history (openai provider)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     # serializes turns on one session: concurrent chat/confirm calls would interleave the LLM history

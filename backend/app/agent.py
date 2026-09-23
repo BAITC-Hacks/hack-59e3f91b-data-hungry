@@ -20,7 +20,7 @@ from typing import Any
 
 import anthropic
 
-from . import agent_sdk, analogs, attachments as attachments_mod, catalog, certificates, config, ekt_api, knowledge
+from . import agent_openai, agent_sdk, analogs, attachments as attachments_mod, catalog, certificates, config, ekt_api, knowledge
 from .cart import PendingActionError, cart_store
 from .sessions import Session
 
@@ -324,8 +324,12 @@ def llm_provider() -> str | None:
         return p if _anthropic_configured() else None
     if p == "claude_code":
         return p if agent_sdk.configured() else None
+    if p == "openai":
+        return p if agent_openai.configured() else None
     if _anthropic_configured():
         return "anthropic"
+    if agent_openai.configured():
+        return "openai"
     if agent_sdk.configured():
         return "claude_code"
     return None
@@ -718,11 +722,13 @@ async def chat(session: Session, message: str, attachments: list[Any], page_url:
 
     # (c) LLM tool loop
     context = _context_block(session, lang, page_url or session.page_url, pending)
-    if llm_provider() == "claude_code":
+    provider = llm_provider()
+    if provider in ("claude_code", "openai"):
         parts = [context] + [_wrap_attachment(a) for a in attachments]
         parts.append("Сообщение пользователя:\n" + (message.strip() or ("Посмотри вложение." if attachments else "(пустое сообщение)")))
+        runner = agent_openai.run_turn if provider == "openai" else agent_sdk.run_turn
         try:
-            reply = await agent_sdk.run_turn(session, state, "\n\n".join(parts), system_prompt=SYSTEM_PROMPT, tool_specs=TOOLS, handlers=TOOL_HANDLERS)
+            reply = await runner(session, state, "\n\n".join(parts), system_prompt=SYSTEM_PROMPT, tool_specs=TOOLS, handlers=TOOL_HANDLERS)
         except Exception:
             log.exception("claude_code turn failed")
             reply = "Не удалось связаться с AI-сервисом. Попробуйте ещё раз или свяжитесь с менеджером: " + MANAGER_CONTACTS["phone"]
