@@ -125,10 +125,10 @@ def test_health(client):
 def test_root_redirects_to_demo(client):
     r = client.get("/", follow_redirects=False)
     assert r.status_code == 302
-    assert r.headers["location"] == "/widget/demo/index.html"
+    assert r.headers["location"] == "/widget/demo/index.html?v=20260923-no-demo-certificates"
     head = client.head("/", follow_redirects=False)
     assert head.status_code == 302
-    assert head.headers["location"] == "/widget/demo/index.html"
+    assert head.headers["location"] == "/widget/demo/index.html?v=20260923-no-demo-certificates"
 
 
 def test_search_and_product(client):

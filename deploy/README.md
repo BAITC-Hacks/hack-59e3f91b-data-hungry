@@ -8,8 +8,8 @@
    ```
 
    Скрипт переносит только файлы текущего коммита, локальную базу аудита `data/ekt_catalog.sqlite3` (если есть) и `backend/.env` с правами `600`; существующие файлы VM не удаляет. `vm_setup.sh` ставит зависимости, строит индекс и импортирует детали как датированный резервный снимок. `vm_run.sh` запускает бэкенд в одном процессе, отключает `/lab` по умолчанию и хранит PID в `server.pid`. Jupyter на 8888 не трогать.
-3. Проверить `https://web-uct8xo9mo.gobrev.dev/api/health` и `https://web-uct8xo9mo.gobrev.dev/widget/demo/index.html` из внешнего браузера без входа в NVIDIA. Для локальной проверки VM: `ssh distinctive-orange-mammal 'curl -fsS http://127.0.0.1:8881/api/health'`.
-4. Виджет: `<script src="https://web-uct8xo9mo.gobrev.dev/widget/widget.js" data-api="https://web-uct8xo9mo.gobrev.dev"></script>`; [демо](https://web-uct8xo9mo.gobrev.dev/widget/demo/index.html). Старый `jupyter-uct8xo9mo.gobrev.dev` с NVIDIA Authorization не использовать для ссылки жюри.
+3. Проверить `https://web-uct8xo9mo.gobrev.dev/api/health` и `https://web-uct8xo9mo.gobrev.dev/widget/demo/index.html?v=20260923-no-demo-certificates` из внешнего браузера без входа в NVIDIA. Для локальной проверки VM: `ssh distinctive-orange-mammal 'curl -fsS http://127.0.0.1:8881/api/health'`.
+4. Виджет: `<script src="https://web-uct8xo9mo.gobrev.dev/widget/widget.js?v=20260923-no-demo-certificates" data-api="https://web-uct8xo9mo.gobrev.dev"></script>`; [демо](https://web-uct8xo9mo.gobrev.dev/widget/demo/index.html?v=20260923-no-demo-certificates). Версия в URL обходит кэш Cloudflare после удаления синтетических сертификатов. Старый `jupyter-uct8xo9mo.gobrev.dev` с NVIDIA Authorization не использовать для ссылки жюри.
 
 ## Переход на ekt.orau.kz
 
