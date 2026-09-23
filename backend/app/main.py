@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import agent, attachments, catalog, config, ekt_api
+from . import agent, attachments, catalog, certificates, config, ekt_api
 from .cart import PendingActionError, cart_store
 from .schemas import (
     Cart,
@@ -193,6 +193,14 @@ async def product_get(product_id: int) -> Any:
         else None
     )
     return card
+
+
+# ---- certificates (demo registry) -------------------------------------------------------------------------------
+@app.get("/api/certificates/{cert_id}", response_class=HTMLResponse)
+async def certificate_page(cert_id: str) -> Any:
+    """Printable card for a certificate from the demo registry (clearly watermarked as a demo document)."""
+    status = 200 if certificates.get_certificate(cert_id) else 404
+    return HTMLResponse(certificates.render_certificate_html(cert_id), status_code=status)
 
 
 # ---- health -----------------------------------------------------------------------------------------------------

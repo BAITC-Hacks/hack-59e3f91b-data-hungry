@@ -15,6 +15,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import anthropic
@@ -292,7 +293,15 @@ def record_exchange(session: Session, user_text: str, assistant_text: str) -> No
 
 
 def llm_configured() -> bool:
-    return bool(os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"))
+    """Whether the SDK will find a credential: an env key/token, or an `ant auth login` profile on disk."""
+    if os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"):
+        return True
+    profile_dir = Path.home() / ".config" / "anthropic"
+    return profile_dir.is_dir() and any(profile_dir.iterdir())
+
+
+FALLBACK_BETA = "server-side-fallback-2026-07-01"
+_fallbacks_enabled = config.LLM_FALLBACKS
 
 
 _client: anthropic.AsyncAnthropic | None = None
@@ -511,6 +520,16 @@ def _trim_history(session: Session) -> None:
     session.messages = msgs
 
 
+def _echoable(blocks: list[Any]) -> list[Any]:
+    """Blocks that go back into the history (and whose tool calls we execute).
+
+    After a mid-output refusal fallback the API marks the switch with a `fallback` block; model-internal blocks
+    (thinking, tool_use) before the last marker must not be echoed back, text blocks are kept as usual.
+    """
+    boundary = max((i for i, b in enumerate(blocks) if b.type == "fallback"), default=-1)
+    return [b for i, b in enumerate(blocks) if b.type != "fallback" and (i > boundary or b.type == "text")]
+
+
 def _serialize_content(blocks: list[Any]) -> list[dict[str, Any]]:
     return [b.model_dump(mode="json", exclude_none=True) for b in blocks]
 
@@ -660,35 +679,60 @@ async def chat(session: Session, message: str, attachments: list[Any], page_url:
     return _response(session, reply, state, cart_updated=False, t0=t0)
 
 
+async def _create_message(client: anthropic.AsyncAnthropic, messages: list[dict[str, Any]]) -> Any:
+    """One Messages API call (Opus 5: adaptive thinking is on by default, depth controlled by `effort`).
+
+    Server-side refusal fallbacks (beta) are enabled by default; should the API reject that parameter, the process
+    degrades to the plain endpoint once and keeps working.
+    """
+    global _fallbacks_enabled
+    kwargs: dict[str, Any] = {
+        "model": config.LLM_MODEL,
+        "max_tokens": config.LLM_MAX_TOKENS,
+        "system": [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
+        "tools": TOOLS,
+        "messages": messages,
+        "output_config": {"effort": config.LLM_EFFORT},
+    }
+    if _fallbacks_enabled:
+        try:
+            return await client.beta.messages.create(betas=[FALLBACK_BETA], fallbacks="default", **kwargs)
+        except anthropic.BadRequestError as exc:
+            if "fallback" not in str(exc).lower():
+                raise
+            log.warning("server-side fallbacks rejected by the API (%s); continuing without them", exc)
+            _fallbacks_enabled = False
+    return await client.messages.create(**kwargs)
+
+
 async def _run_llm(session: Session, state: TurnState) -> str:
     """Manual agentic loop: call the model, execute all tool_use blocks, feed results back; return the reply text."""
     client = _get_client()
     interim = ""  # text emitted alongside tool calls ("Сейчас проверю...") — used only if no final text arrives
     for _ in range(MAX_ITERATIONS):
-        response = await client.messages.create(
-            model=config.LLM_MODEL,
-            max_tokens=config.LLM_MAX_TOKENS,
-            system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
-            tools=TOOLS,
-            messages=session.messages,
-            output_config={"effort": config.LLM_EFFORT},
-        )
+        response = await _create_message(client, session.messages)
         log.info(
-            "llm stop=%s in=%s cached=%s out=%s",
+            "llm model=%s stop=%s in=%s cached=%s out=%s",
+            response.model,
             response.stop_reason,
             response.usage.input_tokens,
             getattr(response.usage, "cache_read_input_tokens", None),
             response.usage.output_tokens,
         )
-        text = "".join(b.text for b in response.content if b.type == "text").strip()
-        tool_uses = [b for b in response.content if b.type == "tool_use"]
+        if any(b.type == "fallback" for b in response.content):
+            log.warning("refusal fallback engaged: served by %s", response.model)
+        blocks = _echoable(list(response.content))
+        text = "".join(b.text for b in blocks if b.type == "text").strip()
+        tool_uses = [b for b in blocks if b.type == "tool_use"]
 
         if response.stop_reason == "refusal":
-            return "Я не могу помочь с этим запросом. Обратитесь к менеджеру: " + MANAGER_CONTACTS["phone"]
+            reply = "Я не могу помочь с этим запросом. Обратитесь к менеджеру: " + MANAGER_CONTACTS["phone"]
+            session.messages.append({"role": "assistant", "content": [{"type": "text", "text": reply}]})
+            return reply
 
         if response.stop_reason == "max_tokens" or not tool_uses:
             # Final answer (or a truncated one): drop unexecutable tool_use blocks so the history stays valid.
-            content = _serialize_content([b for b in response.content if b.type != "tool_use"])
+            content = _serialize_content([b for b in blocks if b.type != "tool_use"])
             if not any(b.get("type") == "text" for b in content):
                 text = text or "Не удалось сформировать ответ. Уточните, пожалуйста, запрос."
                 content = [{"type": "text", "text": text}]
@@ -697,7 +741,7 @@ async def _run_llm(session: Session, state: TurnState) -> str:
                 continue
             return text or interim or "Не удалось сформировать ответ."
 
-        session.messages.append({"role": "assistant", "content": _serialize_content(list(response.content))})
+        session.messages.append({"role": "assistant", "content": _serialize_content(blocks)})
         results = await asyncio.gather(*(_run_tool(b, state) for b in tool_uses))
         session.messages.append({"role": "user", "content": list(results)})
         interim = text or interim

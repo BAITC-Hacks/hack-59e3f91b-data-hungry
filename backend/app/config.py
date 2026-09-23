@@ -23,6 +23,8 @@ EKT_CART_URL = "https://ekt.kz/personal/cart/"
 LLM_MODEL = os.getenv("LLM_MODEL", "claude-opus-5")
 LLM_EFFORT = os.getenv("LLM_EFFORT", "low")  # low | medium | high — chat must answer in seconds
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+# Server-side refusal fallbacks (beta): a safety-classifier decline is re-run on Anthropic's recommended model.
+LLM_FALLBACKS = os.getenv("LLM_FALLBACKS", "1").lower() not in ("0", "false", "no")
 
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
 

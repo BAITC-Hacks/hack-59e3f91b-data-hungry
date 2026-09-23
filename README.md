@@ -2,14 +2,57 @@
 
 Кейс №1 ТОО «Электрокомплект»: ассистент в чате на сайте, который консультирует по каталогу (наличие, характеристики, сертификаты, аналоги, условия покупки) и добавляет товары в корзину только после явного подтверждения клиента.
 
-**Статус (23.09.2026):** идёт сборка прототипа. Что уже в репозитории:
+**Статус (23.09.2026):** прототип собран и запускается локально (см. «Запуск прототипа» ниже). Что в репозитории:
 
 - `backend/` — FastAPI-бэкенд: индекс каталога (SQLite FTS5), живые остатки через API ekt.kz, база знаний по условиям покупки, разбор вложений, агент на Claude (tool use), корзина с подтверждением.
 - `widget/` — встраиваемый чат-виджет (один `<script>`, Shadow DOM, десктоп и мобилка).
 - `docs/API_CONTRACT.md` — контракт API бэкенд ↔ виджет; `docs/FRONTEND.md` — спецификация виджета и сценарий демо.
 - `scripts/`, `reports/` — аудит каталога (этап подготовки данных, см. ниже).
 
-Подробный README с архитектурой, инструкцией запуска и описанием данных обновляется по ходу хакатона.
+## Запуск прототипа
+
+```bash
+cd backend
+uv sync --extra dev
+uv run python scripts/build_index.py --dump ../../probe/dump   # data/catalog.sqlite (15 035 SKU из списка API)
+cp .env.example .env                                           # впишите ANTHROPIC_API_KEY (необязательно, см. ниже)
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Дальше открыть:
+- http://localhost:8000/widget/demo/index.html — имитация карточки товара ekt.kz с виджетом (панель открыта сразу);
+- http://localhost:8000/api/health — `{ok, products, model, llm_configured}`;
+- http://localhost:8000/docs — OpenAPI.
+
+Тесты: `cd backend && uv run pytest -q` (64 теста; помеченные `network` ходят в живой API ekt.kz).
+
+**Без ключа Anthropic** работает всё, кроме свободного диалога: `/api/products/search`, `/api/products/{id}`
+(остатки по складам, характеристики, сертификаты), загрузка файлов, корзина, кнопка «Добавить в корзину» в виджете
+(создаёт предложение), «Подтвердить» / «да, добавь» (применяет его с ограничением по остатку и кратности) и страница
+корзины. `/api/chat` отвечает короткой заметкой, что ключ не задан. Сам цикл LLM проверен офлайн скриптом с
+подменённым клиентом.
+
+Настройки (`backend/.env` или переменные окружения):
+
+| переменная | по умолчанию | смысл |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | — | ключ Anthropic (профиль `ant auth login` тоже подхватывается) |
+| `LLM_MODEL` | `claude-opus-5` | модель |
+| `LLM_EFFORT` | `low` | `output_config.effort`: low / medium / high |
+| `LLM_FALLBACKS` | `1` | серверный fallback при отказе классификатора (beta); `0` — выключить |
+| `PUBLIC_BASE_URL` | `http://localhost:8000` | база для ссылок на корзину и сертификаты |
+| `DETAIL_CACHE_TTL` | `300` | сколько секунд кэшировать detail-ответы ekt.kz (остатки) |
+
+Встраивание на ekt.kz: `<script src="https://HOST/widget/widget.js" data-api="https://HOST" data-lang="ru"></script>`;
+на `*.ekt.kz` виджет дополнительно кладёт подтверждённые позиции в настоящую корзину Bitrix (см. `widget/README.md`),
+букмарклет для живого сайта — `widget/bookmarklet.js`.
+
+Сертификаты: API ekt.kz их не отдаёт, поэтому `backend/data/certificates.json` — явно помеченный **демо-реестр**
+(у каждого документа `demo: true` и водяной знак DEMO на странице).
+
+Структура бэкенда: `app/main.py` (маршруты) · `agent.py` (цикл tool use, шлюз подтверждения) · `cart.py` ·
+`sessions.py` · `catalog.py` (SQLite FTS5) · `analogs.py` · `knowledge.py` · `certificates.py` · `attachments.py`
+(xlsx/docx/pdf/фото) · `ekt_api.py` · `schemas.py` · `config.py`.
 
 ---
 

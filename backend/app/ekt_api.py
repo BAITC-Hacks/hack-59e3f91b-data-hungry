@@ -19,7 +19,7 @@ from . import config
 _decoder = json.JSONDecoder()
 _client: httpx.AsyncClient | None = None
 _detail_cache: dict[int, tuple[float, dict[str, Any]]] = {}
-_sem = asyncio.Semaphore(8)
+_sem = asyncio.Semaphore(24)  # the endpoint copes with ~24 in flight (measured 24 calls in 3.5 s)
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -60,7 +60,7 @@ async def fetch_detail(product_id: int, *, ttl: int | None = None) -> dict[str, 
 
 
 async def fetch_details(product_ids: list[int]) -> dict[int, dict[str, Any]]:
-    """Fetch many details concurrently (the endpoint answers in ~0.2 s; 8 in flight)."""
+    """Fetch many details concurrently (2-3 s per call today; up to 24 in flight)."""
     ids = list(dict.fromkeys(int(i) for i in product_ids))
     results = await asyncio.gather(*(fetch_detail(i) for i in ids))
     return {i: d for i, d in zip(ids, results) if d}
