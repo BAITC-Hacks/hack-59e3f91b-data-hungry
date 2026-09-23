@@ -1,4 +1,4 @@
-"""Uploaded attachments: store, parse (xlsx / docx / pdf / image) and extract specification lines.
+"""Uploaded attachments: store, recognize and extract specification lines.
 
 A specification usually arrives as an Excel/Word/PDF table ("артикул | наименование | кол-во"), or as a
 photo of a part. ``save_and_parse`` stores the file under ``config.UPLOAD_DIR``, extracts text, and turns
@@ -6,12 +6,13 @@ each row into a ``line`` (``{'raw', 'article', 'name', 'qty'}``) so the chat lay
 position up in the catalog. Images are validated with Pillow, re-encoded as JPEG (max side 1568 px) and
 exposed as an Anthropic image content block for vision.
 
-The registry is in-memory (fine for a prototype; files survive on disk).
+The per-session registry is in-memory; extracted results are cached in SQLite by SHA-256.
 """
 from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import io
 import re
 import uuid
@@ -19,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import config
+from . import attachment_cache, config, recognition
 
 MAX_ROWS_PER_SHEET = 300
 MAX_PDF_PAGES = 10
@@ -27,8 +28,13 @@ IMAGE_MAX_SIDE = 1568
 
 _KIND_BY_EXT: dict[str, str] = {
     ".jpg": "image", ".jpeg": "image", ".png": "image", ".webp": "image", ".gif": "image", ".bmp": "image",
+    ".tif": "image", ".tiff": "image",
     ".xlsx": "excel", ".xlsm": "excel", ".xls": "excel",
-    ".docx": "word",
+    ".docx": "word", ".doc": "document", ".pptx": "document", ".ppt": "document",
+    ".odt": "document", ".ods": "document", ".odp": "document",
+    ".txt": "document", ".md": "document", ".csv": "document", ".log": "document",
+    ".mp3": "audio", ".wav": "audio", ".m4a": "audio", ".ogg": "audio", ".oga": "audio",
+    ".flac": "audio", ".webm": "audio", ".weba": "audio", ".mp4": "audio", ".mpeg": "audio", ".mpga": "audio",
     ".pdf": "pdf",
 }
 _KIND_BY_MIME: dict[str, str] = {
@@ -37,6 +43,7 @@ _KIND_BY_MIME: dict[str, str] = {
     "application/vnd.ms-excel": "excel",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "word",
     "application/pdf": "pdf",
+    "audio/mpeg": "audio", "audio/wav": "audio", "audio/webm": "audio", "audio/ogg": "audio",
 }
 
 _HDR_ARTICLE = ("артикул", "арт.", "арт ", "код", "sku", "article", "part", "каталожн", "номер")
@@ -63,7 +70,7 @@ class Attachment:
 
     id: str
     filename: str
-    kind: str  # 'image' | 'excel' | 'word' | 'pdf'
+    kind: str  # image | excel | word | pdf | document | audio
     path: Path
     mime: str
     text: str = ""
@@ -71,6 +78,9 @@ class Attachment:
     summary: str = ""
     width: int = 0
     height: int = 0
+    sha256: str = ""
+    boxes: list[dict[str, Any]] = field(default_factory=list)
+    session_id: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         """Shape returned by ``POST /api/upload``."""
@@ -78,15 +88,16 @@ class Attachment:
 
 
 _registry: dict[str, Attachment] = {}
+_hash_locks: dict[str, asyncio.Lock] = {}
 
 
 def detect_kind(filename: str, mime: str | None = None) -> str | None:
-    """'image' | 'excel' | 'word' | 'pdf' from the extension (preferred) or the MIME type; None if unsupported."""
+    """Attachment kind from extension (preferred) or MIME type; None if unsupported."""
     ext = Path(filename or "").suffix.lower()
     return _KIND_BY_EXT.get(ext) or _KIND_BY_MIME.get((mime or "").split(";")[0].strip().lower())
 
 
-async def save_and_parse(filename: str, content: bytes, mime: str) -> Attachment:
+async def save_and_parse(filename: str, content: bytes, mime: str, session_id: str = "") -> Attachment:
     """Store an upload and parse it (runs the parser in a worker thread).
 
     Args:
@@ -103,23 +114,49 @@ async def save_and_parse(filename: str, content: bytes, mime: str) -> Attachment
     """
     kind = detect_kind(filename, mime)
     if not kind:
-        raise ValueError("Неподдерживаемый тип файла. Можно загрузить jpg/png/webp, xlsx, docx или pdf.")
+        raise ValueError("Неподдерживаемый тип файла.")
     if not content:
         raise ValueError("Пустой файл.")
     att_id = "att_" + uuid.uuid4().hex[:12]
-    safe_name = re.sub(r"[^\w.\-]+", "_", Path(filename).name, flags=re.UNICODE)[:120] or "file"
+    safe_name = re.sub(r"[^\w.\-]+", "_", Path(filename.replace("\\", "/")).name, flags=re.UNICODE)[:120] or "file"
+    digest = hashlib.sha256(content).hexdigest()
     upload_dir = Path(config.UPLOAD_DIR)
     upload_dir.mkdir(parents=True, exist_ok=True)
-    path = upload_dir / f"{att_id}_{safe_name}"
-    att = Attachment(id=att_id, filename=Path(filename).name, kind=kind, path=path, mime=mime or "")
-    await asyncio.to_thread(_store_and_parse, att, content)
+    path = upload_dir / f"{digest}{Path(safe_name).suffix.lower()}"
+    att = Attachment(id=att_id, filename=Path(safe_name).name, kind=kind, path=path, mime=mime or "",
+                     sha256=digest, session_id=session_id)
+    lock = _hash_locks.setdefault(f"{digest}:{kind}", asyncio.Lock())
+    async with lock:
+        cached = await asyncio.to_thread(attachment_cache.get, digest, kind)
+        if cached:
+            att.path = upload_dir / f"{digest}{cached['stored_suffix']}"
+            if not att.path.exists():
+                await asyncio.to_thread(att.path.write_bytes, cached["stored_bytes"])
+            att.text = cached["text"]
+            att.lines = cached["lines"]
+            att.boxes = cached["boxes"]
+            att.summary = cached["summary"]
+            att.mime = cached["mime"]
+            att.width, att.height = cached["width"], cached["height"]
+        else:
+            await asyncio.to_thread(_store_and_parse, att, content)
+            await _recognize(att, content)
+            if att.text.strip():
+                stored_bytes = await asyncio.to_thread(att.path.read_bytes)
+                await asyncio.to_thread(
+                    attachment_cache.put, digest, kind, content, stored_bytes, att.path.suffix,
+                    att.text, att.lines, att.boxes, att.summary, att.mime, att.width, att.height,
+                )
     _registry[att_id] = att
     return att
 
 
-def get_attachment(att_id: str) -> Attachment | None:
+def get_attachment(att_id: str, session_id: str | None = None) -> Attachment | None:
     """Registered attachment by id (None if unknown)."""
-    return _registry.get(att_id)
+    att = _registry.get(att_id)
+    if att is not None and session_id is not None and att.session_id != session_id:
+        return None
+    return att
 
 
 def _store_and_parse(att: Attachment, content: bytes) -> None:
@@ -128,15 +165,48 @@ def _store_and_parse(att: Attachment, content: bytes) -> None:
             _parse_image(att, content)  # stores the re-encoded JPEG itself
         else:
             att.path.write_bytes(content)
-            {"excel": _parse_excel, "word": _parse_word, "pdf": _parse_pdf}[att.kind](att)
+            parser = {"excel": _parse_excel, "word": _parse_word, "pdf": _parse_pdf}.get(att.kind)
+            if parser and att.path.suffix.lower() != ".xls":
+                parser(att)
     except Exception as exc:  # noqa: BLE001 - a broken upload must not break the chat
         if not att.path.exists():
             att.path.write_bytes(content)
-        att.summary = f"не удалось прочитать файл ({type(exc).__name__}: {str(exc)[:80]})"
+        att.summary = f"не удалось прочитать файл ({type(exc).__name__})"
         att.text, att.lines = "", []
         return
-    if att.kind != "image":
+    if att.kind not in ("image", "audio"):
         att.summary = _summary(att.lines)
+
+
+async def _recognize(att: Attachment, content: bytes) -> None:
+    """Augment the specification parser with OCR, ASR and broader Office extraction."""
+    ext = Path(att.filename).suffix.lower()
+    if ext not in recognition.SUPPORTED_EXTS:
+        return
+    if att.summary.startswith("не удалось прочитать") and ext not in (".xls", ".doc", ".ppt"):
+        return
+    try:
+        text, boxes = await recognition.extract_file(content, att.filename)
+    except Exception as exc:  # never expose provider response bodies or uploaded text
+        if att.kind == "image":
+            att.summary += f"; OCR недоступен ({type(exc).__name__})"
+        elif att.kind == "audio" or not att.text.strip():
+            att.summary = f"распознавание недоступно ({type(exc).__name__})"
+        return
+    if text.strip():
+        att.text = text
+        att.boxes = boxes
+        if not att.lines and att.kind in ("pdf", "document", "excel"):
+            rows = [_split_text_row(line) for line in text.splitlines() if line.strip()]
+            att.lines = extract_lines(rows)
+        if att.kind == "image":
+            att.summary += f"; OCR: {len(text)} символов"
+        elif att.kind == "audio":
+            att.summary = f"транскрипция: {len(text)} символов"
+        elif att.lines:
+            att.summary = _summary(att.lines)
+        else:
+            att.summary = f"текст: {len(text)} символов"
 
 
 # --- parsers ----------------------------------------------------------------------------------
@@ -373,7 +443,7 @@ def image_block(att: Attachment) -> dict[str, Any]:
 def text_for_llm(att: Attachment, max_chars: int = 6000) -> str:
     """Compact textual rendering of an attachment for the model prompt."""
     head = f"[Вложение: {att.filename} ({att.kind}), {att.summary}]"
-    if att.kind == "image":
+    if att.kind == "image" and not att.text:
         return head
     parts = [head]
     if att.lines:

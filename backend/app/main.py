@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -34,7 +34,12 @@ if not logging.getLogger().handlers:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("ekt.api")
 
-ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "xlsx", "xls", "docx", "pdf"}
+ALLOWED_EXTENSIONS = {
+    "jpg", "jpeg", "png", "webp", "gif", "bmp", "tif", "tiff", "pdf",
+    "xlsx", "xlsm", "xls", "docx", "doc", "pptx", "ppt", "odt", "ods", "odp",
+    "txt", "md", "csv", "log",
+    "mp3", "wav", "m4a", "ogg", "oga", "flac", "webm", "weba", "mp4", "mpeg", "mpga",
+}
 MAX_UPLOAD_BYTES = config.MAX_UPLOAD_MB * 1024 * 1024
 WIDGET_DIR = config.BACKEND_DIR.parent / "widget"
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -72,7 +77,9 @@ def _check_session_id(session_id: str) -> str:
 @app.post("/api/chat", response_model=ChatResponse)
 async def post_chat(req: ChatRequest) -> Any:
     session = session_store.get_or_create(req.session_id)
-    atts = [a for a in (attachments.get_attachment(i) for i in req.attachment_ids) if a is not None]
+    atts = [a for a in (attachments.get_attachment(i, session.id) for i in req.attachment_ids) if a is not None]
+    if len(atts) != len(req.attachment_ids):
+        raise HTTPException(status_code=404, detail="Вложение не найдено в этой сессии")
     t0 = time.perf_counter()
     result = await agent.chat(session, req.message, atts, req.page_url, req.lang)
     log.info(
@@ -125,20 +132,23 @@ async def post_confirm(req: ConfirmRequest) -> Any:
 
 # ---- uploads ----------------------------------------------------------------------------------------------------
 @app.post("/api/upload", response_model=UploadResponse)
-async def post_upload(file: UploadFile) -> Any:
+async def post_upload(file: UploadFile, session_id: str | None = Form(default=None)) -> Any:
     filename = Path(file.filename or "file").name
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"Неподдерживаемый формат .{ext}. Разрешены: {', '.join(sorted(ALLOWED_EXTENSIONS))}")
-    content = await file.read()
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    await file.close()
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail=f"Файл больше {config.MAX_UPLOAD_MB} МБ")
     if not content:
         raise HTTPException(status_code=400, detail="Пустой файл")
     mime = file.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
-    att = await attachments.save_and_parse(filename, content, mime)
+    session = session_store.get_or_create(session_id)
+    att = await attachments.save_and_parse(filename, content, mime, session.id)
     log.info("upload %s kind=%s bytes=%d -> %s", filename, att.kind, len(content), att.id)
-    return {"attachment_id": att.id, "filename": att.filename, "kind": att.kind, "summary": att.summary or ""}
+    return {"attachment_id": att.id, "filename": att.filename, "kind": att.kind,
+            "summary": att.summary or "", "session_id": session.id}
 
 
 # ---- cart -------------------------------------------------------------------------------------------------------

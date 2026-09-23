@@ -142,6 +142,7 @@ class UploadResponse(BaseModel):
     filename: str
     kind: str
     summary: str = ""
+    session_id: str | None = None
 
 
 class HealthResponse(BaseModel):

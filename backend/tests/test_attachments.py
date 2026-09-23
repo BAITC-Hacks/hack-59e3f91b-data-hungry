@@ -24,6 +24,8 @@ def fixtures() -> dict[str, Path]:
 @pytest.fixture(autouse=True)
 def _upload_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(config, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(config, "ATTACHMENT_DB_PATH", tmp_path / "attachments.sqlite3")
+    monkeypatch.setenv("NITEC_API_KEY", "")
 
 
 async def test_xlsx_spec_lines(fixtures: dict[str, Path]) -> None:
@@ -110,4 +112,4 @@ def test_extract_lines_without_header() -> None:
 def test_detect_kind() -> None:
     assert attachments.detect_kind("a.XLSX") == "excel"
     assert attachments.detect_kind("photo", "image/jpeg") == "image"
-    assert attachments.detect_kind("x.txt", "text/plain") is None
+    assert attachments.detect_kind("x.txt", "text/plain") == "document"

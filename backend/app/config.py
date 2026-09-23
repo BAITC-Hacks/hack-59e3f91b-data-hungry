@@ -13,6 +13,7 @@ DATA_DIR = BACKEND_DIR / "data"
 KNOWLEDGE_DIR = DATA_DIR / "knowledge"
 DB_PATH = Path(os.getenv("EKT_DB_PATH", DATA_DIR / "catalog.sqlite"))
 UPLOAD_DIR = Path(os.getenv("EKT_UPLOAD_DIR", DATA_DIR / "uploads"))
+ATTACHMENT_DB_PATH = Path(os.getenv("EKT_ATTACHMENT_DB_PATH", DATA_DIR / "attachments.sqlite3"))
 
 EKT_SITE = "https://ekt.kz"
 EKT_API_BASE = os.getenv("EKT_API_BASE", "https://ekt.kz/api")
