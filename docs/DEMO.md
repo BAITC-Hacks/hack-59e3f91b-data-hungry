@@ -1,7 +1,7 @@
 # Сценарий демо для жюри (5–7 минут)
 
-**Стенд:** https://ekt-assistant-ypmkr1h7l.gobrev.dev/widget/demo/index.html (имитация карточки товара ekt.kz, виджет открыт сразу).
-Health: https://ekt-assistant-ypmkr1h7l.gobrev.dev/api/health. Мобильная версия: открыть тот же адрес на телефоне или в DevTools (панель на весь экран).
+**Стенд:** https://ekt-assistant.orau.kz/widget/demo/index.html (имитация карточки товара ekt.kz, виджет открыт сразу).
+Health: https://ekt-assistant.orau.kz/api/health. Мобильная версия: открыть тот же адрес на телефоне или в DevTools (панель на весь экран).
 
 Сайт ekt.kz сейчас отвечает по 7–9 секунд на первую карточку товара, дальше работает кеш. Перед демо стоит один раз прогнать пункты 1–2, чтобы карточки были прогреты.
 
