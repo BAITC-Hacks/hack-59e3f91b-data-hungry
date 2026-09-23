@@ -104,6 +104,7 @@ def isolated(monkeypatch):
     monkeypatch.setattr(main, "attachments", stubs["attachments"])
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("CHAT_AGENT_PROVIDER", "anthropic")
 
     async def _fetch(pid: int, *, ttl=None):
         return DETAIL if int(pid) == PRODUCT["id"] else None

@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import agent, attachments, catalog, certificates, config, ekt_api, recognition
+from . import agent, attachments, catalog, certificates, config, ekt_api, recognition, upload_jobs
 from .cart import PendingActionError, cart_store
 from .schemas import (
     Cart,
@@ -54,7 +54,7 @@ async def lifespan(_: FastAPI):
         log.info("catalog ready: %s products", catalog.count_products())
     except RuntimeError as exc:
         log.warning("catalog DB not available: %s", exc)
-    log.info("LLM provider=%s model=%s effort=%s configured=%s", agent.llm_provider(), config.LLM_MODEL, config.LLM_EFFORT, agent.llm_configured())
+    log.info("LLM provider=%s model=%s configured=%s", agent.llm_provider(), agent.active_model(), agent.llm_configured())
     yield
 
 
@@ -90,12 +90,11 @@ async def post_chat(req: ChatRequest) -> Any:
     async with session.lock:  # one turn at a time per session (two tabs / direct API calls)
         result = await agent.chat(session, req.message, atts, req.page_url, req.lang)
     log.info(
-        "chat sid=%s lang=%s atts=%d len=%d msg=%r -> %d products, pending=%s, %d ms",
+        "chat sid=%s lang=%s atts=%d msg_chars=%d -> %d products, pending=%s, %d ms",
         session.id,
         req.lang,
         len(atts),
         len(req.message),
-        _loggable(req.message),
         len(result["products"]),
         bool(result["pending_action"]),
         int((time.perf_counter() - t0) * 1000),
@@ -163,6 +162,22 @@ async def post_upload(file: UploadFile, session_id: str | None = Form(default=No
     log.info("upload %s kind=%s bytes=%d -> %s", filename, att.kind, len(content), att.id)
     return {"attachment_id": att.id, "filename": att.filename, "kind": att.kind,
             "summary": att.summary or "", "session_id": session.id}
+
+
+@app.post("/api/upload/jobs", status_code=202)
+async def post_upload_job(file: UploadFile, session_id: str | None = Form(default=None)) -> Any:
+    """Queue recognition and return an ID for stage polling; never expose partial text as chat-ready."""
+    filename, content, mime = await _read_upload(file)
+    session = session_store.get_or_create(session_id)
+    return upload_jobs.start(filename, content, mime, session.id).public()
+
+
+@app.get("/api/upload/jobs/{job_id}")
+async def get_upload_job(job_id: str, session_id: str) -> Any:
+    job = upload_jobs.get(job_id, _check_session_id(session_id))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Задача распознавания не найдена в этой сессии")
+    return job.public()
 
 
 def _require_local_file_lab(request: Request) -> None:
@@ -265,4 +280,5 @@ async def health() -> Any:
         products = catalog.count_products()
     except Exception:
         products = 0
-    return {"ok": True, "products": products, "model": config.LLM_MODEL, "provider": agent.llm_provider(), "llm_configured": agent.llm_configured()}
+    return {"ok": True, "products": products, "model": agent.active_model(), "provider": agent.llm_provider(),
+            "llm_configured": agent.llm_configured()}

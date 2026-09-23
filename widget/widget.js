@@ -28,10 +28,10 @@
     lang: ds.lang === 'kk' ? 'kk' : 'ru',
     openOnLoad: ['1', 'true', 'yes'].indexOf(String(ds.open || '').toLowerCase()) !== -1,
     title: ds.title || '',
-    timeoutMs: 60000,
+    timeoutMs: 65000,
     sessionKey: 'ekt_ai_session',
     convKey: 'ekt_ai_conv',
-    accept: '.jpg,.jpeg,.png,.webp,.xlsx,.xls,.docx,.pdf',
+    accept: '.jpg,.jpeg,.png,.webp,.gif,.bmp,.tif,.tiff,.xlsx,.xls,.xlsm,.docx,.doc,.pdf,.pptx,.ppt,.odt,.ods,.txt,.csv,.mp3,.wav,.m4a,.ogg,.flac,.webm',
     maxUploadMb: 15,
     nativeCart: /(^|\.)ekt\.kz$/i.test(location.hostname),
     nativeCartUrl: 'https://ekt.kz/personal/cart/',
@@ -62,8 +62,10 @@
       pendingTitle: 'Добавить в корзину?', confirm: 'Подтвердить', cancel: 'Отмена', max: 'макс. {n}', pcs: 'шт',
       cartItems: ['позиция', 'позиции', 'позиций'], cartOpen: 'Открыть ↗', cartLink: 'Открыть корзину ↗',
       escalation: 'Связаться с менеджером', phone: 'Телефон', whatsapp: 'WhatsApp', email: 'E-mail',
-      errorSend: 'Не удалось отправить.', errorTimeout: 'Сервер не ответил за 60 секунд.', retry: 'Повторить',
-      errorUpload: 'Не удалось загрузить файл.', errorTooBig: 'Файл больше 15 МБ.', uploading: 'Загрузка…',
+      errorSend: 'Не удалось отправить.', errorTimeout: 'Сервер не ответил за 65 секунд.', retry: 'Повторить',
+      errorUpload: 'Не удалось распознать файл.', errorTooBig: 'Файл больше 15 МБ.', uploading: 'Загрузка…',
+      uploadStages: { queued: 'Ожидает обработки…', checking_cache: 'Проверяем ранее распознанные файлы…',
+        parsing: 'Извлекаем текст и таблицы…', recognizing: 'Распознаём содержимое…', ready: 'Готово' },
       lookAttachment: 'Посмотри вложение'
     },
     kk: {
@@ -85,8 +87,10 @@
       pendingTitle: 'Себетке қосу керек пе?', confirm: 'Растау', cancel: 'Бас тарту', max: 'макс. {n}', pcs: 'дана',
       cartItems: ['тауар', 'тауар', 'тауар'], cartOpen: 'Ашу ↗', cartLink: 'Себетті ашу ↗',
       escalation: 'Менеджермен байланысу', phone: 'Телефон', whatsapp: 'WhatsApp', email: 'E-mail',
-      errorSend: 'Жіберу мүмкін болмады.', errorTimeout: 'Сервер 60 секунд ішінде жауап бермеді.', retry: 'Қайталау',
-      errorUpload: 'Файл жүктелмеді.', errorTooBig: 'Файл 15 МБ-тан үлкен.', uploading: 'Жүктелуде…',
+      errorSend: 'Жіберу мүмкін болмады.', errorTimeout: 'Сервер 65 секунд ішінде жауап бермеді.', retry: 'Қайталау',
+      errorUpload: 'Файл танылмады.', errorTooBig: 'Файл 15 МБ-тан үлкен.', uploading: 'Жүктелуде…',
+      uploadStages: { queued: 'Кезекте…', checking_cache: 'Бұрынғы нәтижені тексереміз…',
+        parsing: 'Мәтін мен кестелерді оқимыз…', recognizing: 'Мазмұнды танимыз…', ready: 'Дайын' },
       lookAttachment: 'Тіркемені қара'
     }
   };
@@ -197,6 +201,7 @@
     cart: null,        // cart object from the API
     attachments: [],   // uploaded files waiting to be sent: {id, filename, summary}
     uploading: false,
+    uploadStage: 'queued',
     sending: false,
     error: null,       // {message, retry: fn|null}
     lastRequest: null  // fn re-run by "retry"
@@ -263,7 +268,21 @@
     var fd = new FormData();
     fd.append('file', file, file.name);
     if (state.sessionId) fd.append('session_id', state.sessionId);
-    return apiFetch('/api/upload', { method: 'POST', body: fd }, 310000);
+    return apiFetch('/api/upload/jobs', { method: 'POST', body: fd }, 60000).then(function (job) {
+      if (job.session_id) state.sessionId = job.session_id;
+      var deadline = Date.now() + 300000;
+      function poll() {
+        if (Date.now() > deadline) throw new Error('Превышено время распознавания файла.');
+        state.uploadStage = job.stage || 'queued'; render();
+        if (job.status === 'ready') return job;
+        if (job.status === 'failed') throw new Error(job.error || 'Текст не найден.');
+        return new Promise(function (resolve) { setTimeout(resolve, 600); }).then(function () {
+          return apiFetch('/api/upload/jobs/' + encodeURIComponent(job.job_id) + '?session_id=' + encodeURIComponent(state.sessionId))
+            .then(function (next) { job = next; return poll(); });
+        });
+      }
+      return poll();
+    });
   }
   function apiCart(sessionId) { return apiFetch('/api/cart/' + encodeURIComponent(sessionId)); }
 
@@ -382,13 +401,14 @@
       ]),
       stores ? el('div', { class: 'stores' }, [stores]) : null,
       certs.length ? el('div', { class: 'certs' }, certs.map(function (c) {
-        return el('a', { href: safeUrl(c.url), target: '_blank', rel: 'noopener noreferrer', html: ICON.doc }, [c.title || t().certs]);
+        return el('a', { href: safeUrl(c.url), target: '_blank', rel: 'noopener noreferrer', html: ICON.doc },
+          [(c.demo ? 'ДЕМО · ' : '') + (c.title || t().certs)]);
       })) : null,
       p.reason ? el('div', { class: 'reason' }, [p.reason]) : null,
       el('div', { class: 'card-actions' }, [
-        el('button', { class: 'btn primary', type: 'button', onclick: function () {
+        p.stock_status === 'in_stock' ? el('button', { class: 'btn primary', type: 'button', onclick: function () {
           sendMessage(fill(t().addMsg, { name: p.name || '', id: p.id }));
-        } }, [t().addToCart]),
+        } }, [t().addToCart]) : null,
         safeUrl(p.url) ? el('a', { class: 'btn outline', href: safeUrl(p.url), target: '_blank', rel: 'noopener noreferrer' }, [t().onSite]) : null
       ])
     ]);
@@ -501,7 +521,8 @@
         el('button', { type: 'button', 'aria-label': d.close, onclick: function () { state.attachments.splice(i, 1); render(); } }, ['✕'])
       ]));
     });
-    if (state.uploading) ui.attachList.appendChild(el('span', { class: 'achip' }, [el('small', {}, [d.uploading])]));
+    if (state.uploading) ui.attachList.appendChild(el('span', { class: 'achip', role: 'status' },
+      [el('small', {}, [(d.uploadStages && d.uploadStages[state.uploadStage]) || d.uploading])]));
     ui.sendBtn.disabled = state.sending || state.uploading;
     ui.clip.disabled = state.uploading;
     // scroll last: the bars above change the list height
@@ -639,7 +660,7 @@
     ui.file.value = '';
     if (!file) return;
     if (file.size > CONFIG.maxUploadMb * 1024 * 1024) { state.error = { message: t().errorTooBig, retry: null }; render(); return; }
-    state.uploading = true; state.error = null; render();
+    state.uploading = true; state.uploadStage = 'queued'; state.error = null; render();
     apiUpload(file).then(function (res) {
       if (res.session_id) state.sessionId = res.session_id;
       state.attachments.push({ id: res.attachment_id, filename: res.filename || file.name, summary: res.summary || '' });

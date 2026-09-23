@@ -33,7 +33,7 @@ def _get_client() -> httpx.AsyncClient:
         _client = httpx.AsyncClient(
             base_url=config.EKT_API_BASE,
             auth=(config.EKT_API_USER, config.EKT_API_PASS),
-            timeout=httpx.Timeout(30.0, connect=10.0),
+            timeout=httpx.Timeout(6.0, connect=3.0),
             headers={"User-Agent": "ekt-ai-assistant/0.1"},
         )
     return _client

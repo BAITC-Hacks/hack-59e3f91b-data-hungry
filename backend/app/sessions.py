@@ -15,11 +15,12 @@ SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 
 @dataclass
 class Session:
-    """Conversation state. `messages` are Anthropic message dicts (user/assistant turns incl. tool blocks)."""
+    """Conversation state. Provider histories are separate and contain no persisted tool traces."""
 
     id: str
     lang: str = "ru"
     messages: list[dict[str, Any]] = field(default_factory=list)
+    sgr_messages: list[dict[str, Any]] = field(default_factory=list)
     last_products: list[dict[str, Any]] = field(default_factory=list)
     page_url: str | None = None
     sdk_session_id: str | None = None  # Claude Code session to resume (claude_code provider)

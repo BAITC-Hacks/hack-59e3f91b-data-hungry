@@ -42,7 +42,17 @@ Accepted: jpg/jpeg/png/webp/gif/bmp/tif/tiff; xlsx/xlsm/xls; docx/doc; pptx/ppt;
 ```json
 { "attachment_id": "att_...", "filename": "spec.xlsx", "kind": "image|excel|word|pdf|document|audio", "summary": "12 строк, найдено 9 артикулов", "session_id": "uuid" }
 ```
-Pass the returned `session_id` and `attachment_ids` in the next `/api/chat` call. Attachments from another session are rejected with HTTP 404. Original bytes and extracted text are cached in `backend/data/attachments.sqlite3` by SHA-256, file kind and processor/model signature; repeated uploads do not call OCR/ASR again. `MEDIA_AI_PROVIDER=openai` (default) uses `gpt-5.6-luna` for image/scanned-PDF text and `gpt-transcribe` for audio; it requires `OPENAI_API_KEY`. `MEDIA_AI_PROVIDER=nitec` uses Chandra OCR and Whisper through `llm.nitec.kz` and requires `NITEC_API_KEY`. OpenAI OCR does not return verified bounding boxes. Without the selected provider key, images remain available to the main vision-capable agent, while audio transcription and scanned-PDF OCR are unavailable.
+Pass the returned `session_id` and `attachment_ids` in the next `/api/chat` call. Attachments from another session are rejected with HTTP 404. Original bytes and extracted text are cached in `backend/data/attachments.sqlite3` by SHA-256, file kind and processor/model signature; repeated uploads do not call OCR/ASR again. `MEDIA_AI_PROVIDER=openai` (default) uses `gpt-5.6-luna` for image/scanned-PDF text and `gpt-transcribe` for audio; it requires `OPENAI_API_KEY`. `MEDIA_AI_PROVIDER=nitec` uses Chandra OCR and Whisper through `llm.nitec.kz` and requires `NITEC_API_KEY`. OpenAI OCR does not return verified bounding boxes. The default SGR agent accepts only successfully recognized text; the legacy Anthropic agent can additionally inspect image bytes.
+
+## POST /api/upload/jobs and GET /api/upload/jobs/{job_id}?session_id=...
+
+Asynchronous version of upload used by the widget. `POST` uses the same multipart fields and returns HTTP 202:
+
+```json
+{ "job_id": "job_...", "session_id": "uuid", "filename": "spec.xlsx", "status": "processing", "stage": "queued", "attachment_id": null, "kind": null, "summary": "", "error": null }
+```
+
+Poll `GET` with the returned `session_id`. Stages are `queued`, `checking_cache`, `parsing`, `recognizing`, then `ready` or `failed`. Only `ready` includes a usable `attachment_id`; `failed` includes `error`. A different session gets 404. Jobs live in process memory for one hour; a process restart loses job state.
 
 For local testing only, set `ENABLE_FILE_LAB=1` and bind the backend to `127.0.0.1`. `GET /lab` serves a simple upload page. `POST /api/lab/parse` accepts the same `file` form field and returns `filename`, `kind`, `summary`, `text`, `lines`, `boxes`, `processor`, `sha256`. Both routes reject non-loopback clients and are disabled by default.
 
@@ -51,7 +61,7 @@ For local testing only, set `ENABLE_FILE_LAB=1` and bind the backend to `127.0.0
 ## GET /cart/{session_id} -> HTML cart page (server-rendered), links to product pages on ekt.kz
 ## GET /api/products/search?q=...&limit=10 -> `{ "products": [...] }` (same product card shape)
 ## GET /api/products/{id} -> product card + `detail` (stores, properties, description)
-## GET /api/health -> `{ "ok": true, "products": 213456, "model": "claude-opus-5" }`
+## GET /api/health -> `{ "ok": true, "products": 15035, "model": "gpt-4.1-mini", "llm_configured": true }`
 
 ## Widget embedding
 ```html
@@ -71,5 +81,5 @@ and shows the link `https://ekt.kz/personal/cart/` instead of the prototype cart
 ## Safety rules enforced server-side
 - Cart changes happen ONLY through a confirmed `pending_action` (button or explicit "да/добавь/подтверждаю" message). The LLM cannot mutate the cart directly.
 - Quantity is clamped to live stock (detail API, fetched at confirmation time) and to pack multiplicity (`KRATNOST_MIN`).
-- Prices/stock in replies come from tool results, never from the model's memory.
+- Prices/stock in replies come from tool results, never from the model's memory. If live detail is unavailable, the indexed list price is not presented as current and stock is `unknown`.
 - No payment data is requested or stored.
