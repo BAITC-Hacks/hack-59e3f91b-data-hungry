@@ -4,10 +4,10 @@
 #   VM_HOST="ubuntu@global.prd.ga.run.brev.nvidia.com" VM_PORT=47026 bash deploy/push_to_vm.sh
 set -euo pipefail
 VM_HOST="${VM_HOST:-distinctive-orange-mammal}"
-VM_PORT="${VM_PORT:-22}"
+VM_PORT="${VM_PORT:-}"   # empty = take the port from ~/.ssh/config (Brev alias)
 APP_DIR="${APP_DIR:-ekt-assistant}"
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-SSH="ssh -p $VM_PORT -o StrictHostKeyChecking=accept-new"
+SSH="ssh ${VM_PORT:+-p $VM_PORT} -o StrictHostKeyChecking=accept-new"
 echo "== rsync code -> $VM_HOST:$APP_DIR =="
 rsync -az --delete -e "$SSH" \
   --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '.pytest_cache' \
@@ -21,7 +21,7 @@ if [ -n "${DUMP_DIR:-}" ]; then
   rsync -az -e "$SSH" "$DUMP_DIR/" "$VM_HOST:$APP_DIR/backend/data/dump/"
 fi
 if [ -f "$REPO_DIR/backend/.env" ]; then
-  scp -P "$VM_PORT" -q "$REPO_DIR/backend/.env" "$VM_HOST:$APP_DIR/backend/.env"
+  scp ${VM_PORT:+-P $VM_PORT} -q "$REPO_DIR/backend/.env" "$VM_HOST:$APP_DIR/backend/.env"
 fi
 echo "== setup + run on VM =="
 $SSH "$VM_HOST" "APP_DIR=\$HOME/$APP_DIR bash \$HOME/$APP_DIR/deploy/vm_setup.sh && APP_DIR=\$HOME/$APP_DIR bash \$HOME/$APP_DIR/deploy/vm_run.sh"
