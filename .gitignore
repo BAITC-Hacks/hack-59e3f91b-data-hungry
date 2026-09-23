@@ -1,18 +1,27 @@
+# secrets
 .env
 .env.*
 !.env.example
-/data/
+backend/.env
+
+# python
 __pycache__/
 *.pyc
 .venv/
+backend/.venv/
 .pytest_cache/
-backend/.env
+
+# generated data (rebuild with scripts/dump_catalog.py + scripts/build_index.py)
 backend/data/catalog.sqlite
 backend/data/catalog.sqlite-journal
+backend/data/catalog.building
 backend/data/dump/
 backend/data/uploads/
 backend/data/attachments.sqlite3
 backend/data/attachments.sqlite3-*
+/data/
+
+# OS / IDE
 .DS_Store
 .idea/
 .vscode/

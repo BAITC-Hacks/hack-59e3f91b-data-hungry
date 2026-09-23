@@ -87,16 +87,20 @@ class CartStore:
             expires_at (ISO-8601).
         """
         merged: dict[int, dict[str, Any]] = {}
+        bad_qty = False
         for raw in items:
             try:
                 pid = int(raw["product_id"])
-                qty = int(raw.get("qty") or 1)
+                qty = int(raw.get("qty") if raw.get("qty") is not None else 1)
             except (KeyError, TypeError, ValueError):
                 continue
+            if pid <= 0 or qty < 1:  # a malformed tool call must not become a proposal the user confirms by reflex
+                bad_qty = True
+                continue
             entry = merged.setdefault(pid, {"qty": 0, "name": raw.get("name")})
-            entry["qty"] += max(1, qty)
+            entry["qty"] += qty
         if not merged:
-            raise ValueError("Нет корректных позиций для добавления")
+            raise ValueError("Некорректное количество: укажи целое число >= 1" if bad_qty else "Нет корректных позиций для добавления")
 
         details = await asyncio.gather(*(ekt_api.fetch_detail(pid) for pid in merged))
         out_items = []

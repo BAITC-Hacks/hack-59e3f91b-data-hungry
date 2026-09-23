@@ -8,6 +8,7 @@ Request:
 { "session_id": "uuid-or-null", "message": "Есть ли в наличии 027228 Legrand?", "attachment_ids": ["att_..."], "page_url": "https://ekt.kz/catalog/...", "lang": "ru" }
 ```
 `page_url` is optional: the page the widget is embedded on (lets the assistant know which product the user is looking at). `lang` is `ru` (default) or `kk`; the assistant answers in that language.
+`session_id`: send `null` on the first call and keep the id from the response. A client-chosen id must match `[A-Za-z0-9_-]{16,64}` (the id is the only key to the cart, so short/guessable ids are replaced by a server-minted one — check `session_id` in every response). `message` is capped at 4000 characters (HTTP 422 above that).
 
 Response (`ChatResponse`, same shape for every chat-like endpoint):
 ```json

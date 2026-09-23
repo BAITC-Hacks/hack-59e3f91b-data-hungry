@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Path as PathParam, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,7 +28,7 @@ from .schemas import (
     UploadResponse,
     normalize_lang,
 )
-from .sessions import session_store
+from .sessions import SESSION_ID_RE, session_store
 
 if not logging.getLogger().handlers:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -43,7 +43,8 @@ ALLOWED_EXTENSIONS = {
 MAX_UPLOAD_BYTES = config.MAX_UPLOAD_MB * 1024 * 1024
 WIDGET_DIR = config.BACKEND_DIR.parent / "widget"
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
-_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_DIGIT_RUN_RE = re.compile(r"\d{8,}")  # card/account-like digit runs are masked before anything reaches the log
+ProductId = PathParam(gt=0, lt=2**53)
 
 
 @asynccontextmanager
@@ -68,9 +69,14 @@ if WIDGET_DIR.is_dir():
 
 
 def _check_session_id(session_id: str) -> str:
-    if not _SESSION_ID_RE.match(session_id):
+    if not SESSION_ID_RE.match(session_id):
         raise HTTPException(status_code=400, detail="bad session_id")
     return session_id
+
+
+def _loggable(message: str) -> str:
+    """Short preview of a user message for the log with long digit runs masked (no payment data is ever stored)."""
+    return _DIGIT_RUN_RE.sub("***", message[:80])
 
 
 # ---- chat -------------------------------------------------------------------------------------------------------
@@ -81,13 +87,15 @@ async def post_chat(req: ChatRequest) -> Any:
     if len(atts) != len(req.attachment_ids):
         raise HTTPException(status_code=404, detail="Вложение не найдено в этой сессии")
     t0 = time.perf_counter()
-    result = await agent.chat(session, req.message, atts, req.page_url, req.lang)
+    async with session.lock:  # one turn at a time per session (two tabs / direct API calls)
+        result = await agent.chat(session, req.message, atts, req.page_url, req.lang)
     log.info(
-        "chat sid=%s lang=%s atts=%d msg=%r -> %d products, pending=%s, %d ms",
+        "chat sid=%s lang=%s atts=%d len=%d msg=%r -> %d products, pending=%s, %d ms",
         session.id,
         req.lang,
         len(atts),
-        req.message[:80],
+        len(req.message),
+        _loggable(req.message),
         len(result["products"]),
         bool(result["pending_action"]),
         int((time.perf_counter() - t0) * 1000),
@@ -101,23 +109,24 @@ async def post_confirm(req: ConfirmRequest) -> Any:
     t0 = time.perf_counter()
     session = session_store.get_or_create(req.session_id)
     lang = normalize_lang(session.lang)
-    pending = cart_store.pending(session.id)
-    if pending is None or pending["action_id"] != req.action_id:
-        raise HTTPException(status_code=409, detail="Нет действия, ожидающего подтверждения (или оно устарело)")
-    if req.confirm:
-        try:
-            result = await cart_store.confirm(session.id, req.action_id)
-        except PendingActionError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        reply = agent.render_confirmation(result, lang)
-        agent.record_exchange(session, "[Кнопка «Подтвердить»]", reply)
-        cart_updated = bool(result["applied"])
-        log.info("confirm sid=%s applied=%d skipped=%d", session.id, len(result["applied"]), len(result["skipped"]))
-    else:
-        cart_store.reject(session.id, req.action_id)
-        reply = agent.render_rejection(lang)
-        agent.record_exchange(session, "[Кнопка «Отмена»]", reply)
-        cart_updated = False
+    async with session.lock:  # never interleave with a chat turn on the same session
+        pending = cart_store.pending(session.id)
+        if pending is None or pending["action_id"] != req.action_id:
+            raise HTTPException(status_code=409, detail="Нет действия, ожидающего подтверждения (или оно устарело)")
+        if req.confirm:
+            try:
+                result = await cart_store.confirm(session.id, req.action_id)
+            except PendingActionError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            reply = agent.render_confirmation(result, lang)
+            agent.record_exchange(session, "[Кнопка «Подтвердить»]", reply)
+            cart_updated = bool(result["applied"])
+            log.info("confirm sid=%s applied=%d skipped=%d", session.id, len(result["applied"]), len(result["skipped"]))
+        else:
+            cart_store.reject(session.id, req.action_id)
+            reply = agent.render_rejection(lang)
+            agent.record_exchange(session, "[Кнопка «Отмена»]", reply)
+            cart_updated = False
     return {
         "session_id": session.id,
         "reply": reply,
@@ -158,7 +167,7 @@ async def get_cart(session_id: str) -> Any:
 
 
 @app.delete("/api/cart/{session_id}/items/{product_id}", response_model=Cart)
-async def delete_cart_item(session_id: str, product_id: int) -> Any:
+async def delete_cart_item(session_id: str, product_id: int = ProductId) -> Any:
     return cart_store.remove(_check_session_id(session_id), product_id)
 
 
@@ -179,12 +188,13 @@ async def products_search(q: str = "", limit: int = 10) -> Any:
     limit = max(1, min(limit, 20))
     found = catalog.get_by_article(q)
     seen = {p["id"] for p in found}
-    found += [p for p in catalog.search(q, limit=limit) if p["id"] not in seen]
-    return {"products": [agent.with_certificates(c) for c in await catalog.product_cards(found[:limit])]}
+    found += [p for p in catalog.search(q, limit=limit * 2) if p["id"] not in seen]  # over-fetch: in-stock first
+    cards = [agent.with_certificates(c) for c in await catalog.product_cards(found[: limit * 2])]
+    return {"products": agent.rank_in_stock_first(cards)[:limit]}
 
 
 @app.get("/api/products/{product_id}", response_model=ProductDetailResponse)
-async def product_get(product_id: int) -> Any:
+async def product_get(product_id: int = ProductId) -> Any:
     product = catalog.get_product(product_id)
     detail = await ekt_api.fetch_detail(product_id)
     if product is None:

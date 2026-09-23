@@ -6,10 +6,21 @@ import re
 # canonical brand -> aliases (lowercase, matched as whole words in the product name)
 BRANDS: dict[str, list[str]] = {
     "Legrand": ["legrand", "легранд"],
-    "Schneider Electric": ["schneider", "шнайдер", "шнейдер", "schneider electric"],
+    "Schneider Electric": ["schneider", "шнайдер", "шнейдер", "schneider electric", "schnel", "schel", "schn el"],
     "Systeme Electric": ["systeme electric", "systeme"],
     "IEK": ["iek", "иэк", "iek group"],
-    "EKF": ["ekf"],
+    "EKF": ["ekf", "экф"],
+    "GENERICA": ["generica", "дженерика"],
+    "F&F": ["f&f", "f & f"],
+    "REXANT": ["rexant", "рексант"],
+    "Промрукав": ["промрукав"],
+    "RUCELF": ["rucelf", "русэлф"],
+    "Ajax": ["ajax"],
+    "Welrok": ["welrok"],
+    "Tekfor": ["tekfor"],
+    "Энергомера": ["энергомера"],
+    "УЮТ": ["уют"],
+    "Jinbo": ["jinbo"],
     "KEAZ": ["keaz", "кэаз"],
     "DEKraft": ["dekraft", "декрафт"],
     "Chint": ["chint", "чинт"],
@@ -70,9 +81,18 @@ for canon, aliases in BRANDS.items():
 _ALIAS_RE.sort(key=lambda x: -len(x[1].pattern))
 
 
+_ALIAS_TO_BRAND: dict[str, str] = {a: canon for canon, aliases in BRANDS.items() for a in aliases}
+
+
 def detect_brand(name: str) -> str | None:
+    """Canonical brand whose alias occurs as a whole word anywhere in `name`, else None."""
     n = name.lower()
     for canon, rx in _ALIAS_RE:
         if rx.search(n):
             return canon
     return None
+
+
+def brand_for_alias(text: str) -> str | None:
+    """Canonical brand when the whole (lower-cased, stripped) `text` is exactly one alias — for query tokens."""
+    return _ALIAS_TO_BRAND.get(text.lower().strip())

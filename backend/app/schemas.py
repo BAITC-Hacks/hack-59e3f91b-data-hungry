@@ -16,7 +16,7 @@ def normalize_lang(value: str | None) -> str:
 
 class ChatRequest(BaseModel):
     session_id: str | None = None
-    message: str = ""
+    message: str = Field(default="", max_length=4000)
     attachment_ids: list[str] = Field(default_factory=list)
     page_url: str | None = None
     lang: str = "ru"

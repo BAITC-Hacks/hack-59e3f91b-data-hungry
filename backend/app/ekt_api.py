@@ -40,7 +40,14 @@ def parse_json(raw: str) -> Any:
 
 
 async def fetch_detail(product_id: int, *, ttl: int | None = None) -> dict[str, Any] | None:
-    """Live product detail (stock per store, properties, description). Cached for DETAIL_CACHE_TTL seconds."""
+    """Live product detail (stock per store, properties, description). Cached for DETAIL_CACHE_TTL seconds.
+
+    Args:
+        product_id: ekt.kz product id.
+        ttl: cache lifetime override in seconds. ``0`` means "live only": the API must answer now, and on any
+            error ``None`` is returned instead of a possibly stale cached record (used when confirming a cart
+            action, where an outdated stock figure must never be trusted).
+    """
     ttl = config.DETAIL_CACHE_TTL if ttl is None else ttl
     now = time.time()
     hit = _detail_cache.get(product_id)
@@ -52,6 +59,8 @@ async def fetch_detail(product_id: int, *, ttl: int | None = None) -> dict[str, 
             r.raise_for_status()
             data = parse_json(r.text)
         except Exception:
+            if ttl == 0:
+                return None
             return hit[1] if hit else None
     if not isinstance(data, dict) or "id" not in data:
         return None

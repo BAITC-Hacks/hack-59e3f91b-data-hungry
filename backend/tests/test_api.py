@@ -152,18 +152,18 @@ def test_upload_validation(client):
 
 
 def test_attachment_is_bound_to_upload_session(client):
-    uploaded = client.post("/api/upload", data={"session_id": "owner-session"},
+    uploaded = client.post("/api/upload", data={"session_id": "owner-session-0001"},
                            files={"file": ("request.txt", b"Need cable", "text/plain")})
     assert uploaded.status_code == 200
     body = uploaded.json()
-    assert body["session_id"] == "owner-session"
-    response = client.post("/api/chat", json={"session_id": "other-session", "message": "прочитай файл",
+    assert body["session_id"] == "owner-session-0001"
+    response = client.post("/api/chat", json={"session_id": "other-session-0001", "message": "прочитай файл",
                                               "attachment_ids": [body["attachment_id"]]})
     assert response.status_code == 404
 
 
 def test_confirm_without_pending_is_409(client):
-    r = client.post("/api/chat/confirm", json={"session_id": "sess1", "action_id": "act_nothing", "confirm": True})
+    r = client.post("/api/chat/confirm", json={"session_id": "sess1-sess1-sess1", "action_id": "act_nothing", "confirm": True})
     assert r.status_code == 409
 
 
@@ -176,7 +176,7 @@ def test_chat_without_llm_key_is_helpful(client):
 
 
 def test_button_add_confirm_and_cart_page(client):
-    sid = "abc123"
+    sid = "abc123-abc123-abc123"
     # widget button message -> proposal (works even without the LLM)
     r = client.post("/api/chat", json={"session_id": sid, "message": f"Добавь {PRODUCT['name']} (id {PRODUCT['id']}) — 2 шт"})
     body = r.json()
@@ -220,7 +220,7 @@ def test_button_add_confirm_and_cart_page(client):
 
 
 def test_textual_rejection(client):
-    sid = "rej1"
+    sid = "rej1-rej1-rej1-rej1"
     client.post("/api/chat", json={"session_id": sid, "message": f"Добавь (id {PRODUCT['id']}) — 1 шт"})
     r = client.post("/api/chat", json={"session_id": sid, "message": "нет"})
     body = r.json()

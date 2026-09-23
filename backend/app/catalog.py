@@ -15,13 +15,14 @@ Every step honours brand/category filters and exclude_id; results are deduped an
 """
 from __future__ import annotations
 
+import functools
 import re
 import sqlite3
 import threading
 from typing import Any
 
 from . import config, ekt_api
-from .brands import detect_brand
+from .brands import brand_for_alias, detect_brand
 
 # --------------------------------------------------------------------------- normalization
 
@@ -37,21 +38,37 @@ _UNIT_FOLD: dict[str, str] = {
     "lm": "lm", "лм": "lm",
     "mm": "мм", "мм": "мм",
     "mm2": "мм2", "мм2": "мм2",
-    "p": "p", "р": "p",  # poles 3P / 1P+N
+    "p": "p", "р": "p", "п": "p", "ф": "p",  # poles: 3P / 3Р / 3п / 3ф (IEK, Schneider) / 1P+N
 }
-_UNIT_RE = re.compile(r"(\d)([a-zа-я]{1,3})(?![a-zа-я0-9])")
+# glued units only: '<digit> в ' is the preposition in 100+ names, so single letters must stay glued to the number
+_UNIT_RE = re.compile(r"(\d)([a-zа-я]{1,3}2?)(?![a-zа-я0-9])")
+# unambiguous multi-letter units may be written with a space ('50 Вт', '0,66 кВ', '4 мм2')
+_SPACED_UNIT_RE = re.compile(r"(\d)\s(вт|w|ма|ma|ка|ka|lm|лм|кв|kv|мм2|mm2|мм|mm)(?![a-zа-я0-9])")
 _DIM_RE = re.compile(r"(?<=\d)\s?[хx×*]\s?(?=\d)")
 _DEC_RE = re.compile(r"(?<=\d),(?=\d)")
+# look-alike Cyrillic/Latin letters in letter+digit codes: lamp bases Е27/E27, tripping curves С16/C16
+_LAMP_BASE_RE = re.compile(r"(?<![a-zа-я0-9])[еe](\d{2})(?![a-zа-я0-9])")
+_CURVE_RE = re.compile(r"(?<![a-zа-я0-9])[сc](\d{1,3})(?![a-zа-я0-9])")
+# diameters: 'ф20' / 'ф 20' / 'd 20' / 'd20' / 'ø20' -> 'd20'
+_DIAM_RE = re.compile(r"(?<![a-zа-я0-9])(?:ф|d|ø|⌀)\s?(\d+(?:\.\d+)?)(?![a-zа-я])")
 _JUNK_RE = re.compile(r"[*!\"«»'`]+")
 _WS_RE = re.compile(r"\s+")
 
 
 def normalize_text(text: str | None) -> str:
-    """Normalize free text for indexing/searching: lowercase, ё->е, ²->2, '3х2,5'->'3x2.5', unit folding (16A->16а)."""
+    """Normalize free text for indexing/searching.
+
+    lowercase, ё->е, ²->2, '3х2,5'->'3x2.5', units folded (16A->16а, 50 Вт->50w, 1ф/1п/1Р->1p), homoglyph codes
+    folded (Е27->e27, С16->c16), diameters unified (ф20/ф 20/ø20->d20).
+    """
     s = (text or "").lower().replace("ё", "е").replace("²", "2").replace("³", "3")
     s = _DEC_RE.sub(".", s)
     s = _DIM_RE.sub("x", s)
+    s = _SPACED_UNIT_RE.sub(r"\1\2", s)
     s = _UNIT_RE.sub(lambda m: m.group(1) + _UNIT_FOLD.get(m.group(2), m.group(2)), s)
+    s = _LAMP_BASE_RE.sub(r"e\1", s)
+    s = _CURVE_RE.sub(r"c\1", s)
+    s = _DIAM_RE.sub(r"d\1", s)
     s = _JUNK_RE.sub(" ", s)
     return _WS_RE.sub(" ", s).strip()
 
@@ -146,7 +163,7 @@ def _fts_term(token: str, prefix: bool) -> str:
     return quoted + "*" if prefix else quoted
 
 
-def _stem(token: str) -> str:
+def stem_word(token: str) -> str:
     """Crude Russian stemming by truncation: 'выключатели' -> 'выключател', 'кабель' -> 'кабел', 'щит' -> 'щит'."""
     if len(token) >= 7:
         return token[:-2]
@@ -168,13 +185,15 @@ def slugify(word: str) -> str:
     return "".join(_SLUG_MAP.get(c, c) for c in word)
 
 
-# colloquial query words -> how the catalog actually names the thing (OR-ed with the word itself, prefix-matched)
+# colloquial query words -> how the catalog actually names the thing (OR-ed with the word itself; 2-letter
+# synonyms are matched exactly, longer ones as prefixes)
 SYNONYMS: dict[str, list[str]] = {
     "дифавтомат": ["диф", "авдт", "дифференциальн"],
     "дифавтоматы": ["диф", "авдт", "дифференциальн"],
     "дифференциальный": ["диф", "авдт"],
-    "автомат": ["автоматическ", "ав", "ва"],
-    "автоматы": ["автоматическ", "ав", "ва"],
+    "диф": ["авдт", "дифференциальн"],
+    "автомат": ["автоматическ", "авт", "ав", "ва"],
+    "автоматы": ["автоматическ", "авт", "ав", "ва"],
     "автоматический": ["авт", "ав", "ва"],
     "выключатель": ["выкл", "ва"],
     "выключатели": ["выкл", "ва"],
@@ -183,32 +202,103 @@ SYNONYMS: dict[str, list[str]] = {
     "щиток": ["щит", "щрн", "щрв"],
     "провод": ["кабель", "пв", "пугв"],
 }
+# query words that carry no product information (natural phrasing, LLM tool calls); dropped unless nothing else remains
+STOP_WORDS: frozenset[str] = frozenset({
+    "на", "с", "со", "для", "и", "в", "из", "по", "под", "от", "до", "у", "к", "о", "об", "а", "не", "же", "ли",
+    "шт", "штук", "штуки", "нужен", "нужна", "нужно", "надо", "хочу", "есть", "купить", "цена", "сколько", "стоит",
+    "наличие", "наличии", "найди", "найти", "покажи", "подбери", "подобрать", "какой", "какие", "какая", "что", "это",
+    "товар", "товары", "мне", "нам", "бар", "ма", "керек",
+})
+_DIFF_WORDS = ("диф", "узо", "авдт")  # differential devices: penalized for plain 'автомат ...' queries
+_DIM_TOKEN_RE = re.compile(r"^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$")
+_CURVE_TOKEN_RE = re.compile(r"^c(\d{1,3})$")
+_PACK_RE = re.compile(r"\(\d+(?:/\d+)?\)")  # pack-size groups '(100)' / '(12/144)' at the end of 54 % of names
+_COMPOUND_RE = re.compile(r"[-/]")
 
 
 def _fts_terms(tokens: list[str]) -> list[str]:
-    """FTS5 terms per token: words -> stem prefix (+ synonyms, + category slugs), codes/numbers -> exact phrase."""
+    """FTS5 terms per token.
+
+    words -> stem prefix (+ synonyms, + category slugs); dimensions 'AxB' -> also 'AxBx*' (3-part sizes) and 'BxA';
+    curves 'c16' -> also '16а'; bare numbers -> also 'dN' (diameters); other codes -> exact phrase.
+    """
     terms = []
     for t in tokens:
         if t.isalpha() and len(t) >= 3:
-            stem = _stem(t)
-            alts = [_fts_term(stem, True)] + [_fts_term(a, True) for a in SYNONYMS.get(t, ())]
+            stem = stem_word(t)
+            alts = [_fts_term(stem, True)] + [_fts_term(a, len(a) > 2) for a in SYNONYMS.get(t, ())]
             slug = slugify(stem)
             if slug != stem:
                 alts.append("cat:" + _fts_term(slug, True))
             terms.append("(" + " OR ".join(alts) + ")")
+        elif m := _DIM_TOKEN_RE.match(t):
+            a, b = m.groups()
+            alts = [_fts_term(f"{a}x{b}", False), _fts_term(f"{a}x{b}x", True), _fts_term(f"{b}x{a}", False), _fts_term(f"{b}x{a}x", True)]
+            terms.append("(" + " OR ".join(dict.fromkeys(alts)) + ")")
+        elif m := _CURVE_TOKEN_RE.match(t):
+            terms.append("(" + _fts_term(t, False) + " OR " + _fts_term(m.group(1) + "а", False) + ")")
+        elif t.isdigit():
+            terms.append("(" + _fts_term(t, False) + " OR " + _fts_term("d" + t, False) + ")")
         else:
             terms.append(_fts_term(t, False))
     return terms
 
 
+def _spec_variants(t: str) -> list[str]:
+    """Equivalent spellings of a spec token for name matching ('100x50' ~ '50x100', 'c16' ~ '16а', '20' ~ 'd20')."""
+    variants = [t]
+    if m := _DIM_TOKEN_RE.match(t):
+        variants.append(f"{m.group(2)}x{m.group(1)}")
+    if m := _CURVE_TOKEN_RE.match(t):
+        variants.append(m.group(1) + "а")
+    if t.isdigit():
+        variants.append("d" + t)
+    return variants
+
+
 def _name_hits(name_norm: str, tokens: list[str]) -> int:
-    """Weighted count of query tokens found in the normalized name (spec tokens like '16а'/'3p' weigh 3, words 1)."""
+    """Weighted count of query tokens found in the normalized name (spec tokens like '16а'/'3p' weigh 3, words 1).
+
+    Pack-size groups '(100)' are ignored, numbers/codes must sit on a boundary ('20' does not hit '200' or '(20)'),
+    words and synonyms must start a word ('ав' hits 'ав drx250' but not 'клавиша'); differential devices lose 2
+    points when the query did not ask for them (so plain MCBs outrank АВДТ/УЗО for 'автомат 16а').
+    """
+    nn = _PACK_RE.sub(" ", name_norm)
     hits = 0
     for t in tokens:
         if t.isalpha():
-            hits += any(a in name_norm for a in [_stem(t), *SYNONYMS.get(t, ())])
+            hits += any(re.search(r"(?<![a-zа-я])" + re.escape(a), nn) for a in [stem_word(t), *SYNONYMS.get(t, ())])
         else:
-            hits += 3 * (t.replace(".", " ").replace("+", " ") in name_norm)
+            hits += 3 * any(re.search(r"(?<![\d.])" + re.escape(v) + r"(?![\d.])", nn) for v in _spec_variants(t))
+    if not any(w in t for t in tokens for w in _DIFF_WORDS) and any(w in nn for w in _DIFF_WORDS):
+        hits -= 2
+    return hits
+
+
+# query words with a known home category (slug fragments); a row from that category gets +2, others +0
+CATEGORY_HINTS: dict[str, tuple[str, ...]] = {
+    "автомат": ("avtomaticheskie_vyklyuchateli",),
+    "автоматы": ("avtomaticheskie_vyklyuchateli",),
+    "автоматический": ("avtomaticheskie_vyklyuchateli",),
+    "узо": ("differentsialn", "uzo"),
+    "дифавтомат": ("differentsialn", "avdt"),
+    "дифавтоматы": ("differentsialn", "avdt"),
+    "дифференциальный": ("differentsialn", "avdt"),
+}
+
+
+def _cat_hits(row: dict[str, Any], tokens: list[str]) -> int:
+    """Category evidence for the query words: +2 for a CATEGORY_HINTS match ('автомат' -> MCB categories, not
+    'avtomatizatsiya'), +1 when the word's slug occurs in the category path ('щиты' -> 'shchity_metallicheskie')."""
+    path = " ".join(filter(None, (row.get("cat1"), row.get("cat2"), row.get("cat3"))))
+    hits = 0
+    for t in tokens:
+        if not t.isalpha() or len(t) < 3:
+            continue
+        if t in CATEGORY_HINTS:
+            hits += 2 * any(h in path for h in CATEGORY_HINTS[t])
+        elif slugify(stem_word(t)) in path:
+            hits += 1
     return hits
 
 
@@ -242,6 +332,49 @@ def _tri_search(needles: list[str], limit: int, filt: tuple[str, list[Any]]) -> 
         return []
 
 
+@functools.lru_cache(maxsize=8192)
+def doc_frequency(word: str) -> int:
+    """How many indexed names contain a word starting with `word` (used to weigh rare vs common type words)."""
+    try:
+        row = _connect().execute("SELECT count(*) FROM products_fts WHERE products_fts MATCH ?", ("name_norm:" + _fts_term(word, True),)).fetchone()
+    except sqlite3.OperationalError:
+        return 0
+    return int(row[0])
+
+
+def query_tokens(query: str) -> tuple[list[str], list[str]]:
+    """Normalized query -> (tokens for FTS/ranking, raw tokens for substring fallbacks).
+
+    Alphabetic hyphen/slash compounds are split ('ввгнг-ls' -> 'ввгнг', 'ls'; codes like 'ва47-29' stay whole),
+    stop words and '<N> шт' are dropped unless nothing else remains.
+    """
+    raw = normalize_text(query).split()
+    tokens: list[str] = []
+    for i, t in enumerate(raw):
+        if t.isdigit() and i + 1 < len(raw) and raw[i + 1] in ("шт", "штук", "штуки"):
+            continue  # '10 шт' is a quantity, not a spec
+        parts = _COMPOUND_RE.split(t) if not any(c.isdigit() for c in t) else [t]
+        tokens += [p for p in parts if p]
+    meaningful = [t for t in tokens if t not in STOP_WORDS]
+    return (meaningful or tokens), raw
+
+
+def _query_brand(tokens: list[str]) -> tuple[str | None, list[str]]:
+    """Pull a brand alias out of the query tokens ('шнайдер узо 25а' -> ('Schneider Electric', ['узо', '25а']))."""
+    brand, rest, i = None, [], 0
+    while i < len(tokens):
+        two = " ".join(tokens[i : i + 2])
+        if i + 1 < len(tokens) and (b := brand_for_alias(two)):
+            brand, i = b, i + 2
+            continue
+        if len(tokens[i]) >= 3 and (b := brand_for_alias(tokens[i])):
+            brand, i = b, i + 1
+            continue
+        rest.append(tokens[i])
+        i += 1
+    return brand, rest
+
+
 def search(
     query: str,
     limit: int = 10,
@@ -254,13 +387,27 @@ def search(
 
     Order of precedence: exact article -> article prefix -> article-like token as substring of the name ->
     FTS (all tokens; most tokens in the name first, then bm25) -> OR fallback -> trigram substring fallback.
-    Returns at most `limit` plain dicts, deduped, without stock information.
+    A brand name inside the query becomes a brand filter (any alias, Cyrillic included); if that filter finds
+    nothing the query is retried with the brand as a plain word. Returns at most `limit` plain dicts, deduped,
+    without stock information.
     """
-    qn = normalize_text(query)
-    tokens = qn.split()
+    tokens, raw = query_tokens(query)
     if not tokens:
         return []
-    filt = _filters(category, brand, exclude_id)
+    if not brand:
+        query_brand, rest = _query_brand(tokens)
+        if query_brand:
+            filt = _filters(category, query_brand, exclude_id)
+            if not rest:  # brand-only query: list that brand
+                fsql, fparams = filt
+                return _rows(f"SELECT {_ROW_COLS} FROM products p WHERE 1=1{fsql} ORDER BY p.price DESC LIMIT ?", [*fparams, limit])
+            rows = _search_tokens(rest, raw, limit, filt)
+            if rows:
+                return rows
+    return _search_tokens(tokens, raw, limit, _filters(category, brand, exclude_id))
+
+
+def _search_tokens(tokens: list[str], raw: list[str], limit: int, filt: tuple[str, list[Any]]) -> list[dict[str, Any]]:
     fsql, fparams = filt
     out: dict[int, dict[str, Any]] = {}
 
@@ -300,12 +447,12 @@ def search(
                 rows += _fts_search(" AND ".join([*spec, "(" + " OR ".join(words) + ")"]), limit * 3, filt)
             if len(rows) < 3:
                 rows += _fts_search(" OR ".join(terms), limit * 3, filt)
-        rows.sort(key=lambda r: (-_name_hits(r["name_norm"], tokens), r["rank"]))
+        rows.sort(key=lambda r: (-(_name_hits(r["name_norm"], tokens) + _cat_hits(r, tokens)), r["rank"]))
         add(rows)
 
     # 3) trigram substrings (partial codes, 'нг-ls', typos inside a known fragment)
     if len(out) < max(3, limit // 2):
-        add(_tri_search(tokens, limit, filt))
+        add(_tri_search(raw, limit, filt))
     return list(out.values())
 
 
