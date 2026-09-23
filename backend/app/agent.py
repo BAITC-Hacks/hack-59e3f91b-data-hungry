@@ -335,6 +335,16 @@ def llm_provider() -> str | None:
     return None
 
 
+def effective_model() -> str:
+    """Model name actually used by the active provider (for logs and /api/health)."""
+    p = llm_provider()
+    if p == "openai":
+        return (agent_openai.settings() or {}).get("model", "?")
+    if p == "claude_code":
+        return "claude-code/" + os.getenv("LLM_SDK_MODEL", "opus")
+    return config.LLM_MODEL
+
+
 def llm_configured() -> bool:
     """Whether any LLM backend can authenticate (Anthropic API key or Claude Code login/token)."""
     return llm_provider() is not None
