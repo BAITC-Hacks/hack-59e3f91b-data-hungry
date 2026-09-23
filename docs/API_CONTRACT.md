@@ -36,12 +36,12 @@ The widget renders **Подтвердить / Отмена** buttons for it. Typ
 ```
 -> `ChatResponse`. On `confirm: true` the cart is updated (quantities are clamped to stock and rounded to pack multiplicity), `cart_updated: true`, and `reply` contains the cart link. On `false` nothing changes.
 
-## POST /api/upload  (multipart/form-data, field `file`)
-Accepted: jpg/jpeg/png/webp, xlsx/xls, docx, pdf. Max 15 MB.
+## POST /api/upload  (multipart/form-data, fields `file`, optional `session_id`)
+Accepted: jpg/jpeg/png/webp/gif/bmp/tif/tiff; xlsx/xlsm/xls; docx/doc; pptx/ppt; odt/ods/odp; txt/md/csv/log; PDF; mp3/wav/m4a/ogg/oga/flac/webm/weba/mp4/mpeg/mpga. Max 15 MB.
 ```json
-{ "attachment_id": "att_...", "filename": "spec.xlsx", "kind": "image|excel|word|pdf", "summary": "12 строк, найдено 9 артикулов" }
+{ "attachment_id": "att_...", "filename": "spec.xlsx", "kind": "image|excel|word|pdf|document|audio", "summary": "12 строк, найдено 9 артикулов", "session_id": "uuid" }
 ```
-Then pass `attachment_ids` in the next `/api/chat` call.
+Pass the returned `session_id` and `attachment_ids` in the next `/api/chat` call. Attachments from another session are rejected with HTTP 404. Original bytes and extracted text are cached in `backend/data/attachments.sqlite3` by SHA-256 and file kind; a repeated upload does not call OCR/ASR again. Image and scanned-PDF OCR use `datalab-to/chandra-ocr-2`; audio uses `openai/whisper-large-v3-turbo` through `llm.nitec.kz`. Without `NITEC_API_KEY`, images remain available to the main vision-capable agent, while audio transcription and scanned-PDF OCR are unavailable.
 
 ## GET /api/cart/{session_id}  -> `cart` object (see above)
 ## DELETE /api/cart/{session_id}/items/{product_id} -> `cart` object

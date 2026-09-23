@@ -215,10 +215,10 @@
   }
 
   // ============================================================ 5. API
-  /** fetch() with a 60 s timeout and JSON error extraction (FastAPI puts messages in `detail`). */
-  function apiFetch(path, options) {
+  /** fetch() with a configurable timeout and JSON error extraction (FastAPI puts messages in `detail`). */
+  function apiFetch(path, options, timeoutMs) {
     var ctrl = new AbortController();
-    var timer = setTimeout(function () { ctrl.abort(); }, CONFIG.timeoutMs);
+    var timer = setTimeout(function () { ctrl.abort(); }, timeoutMs || CONFIG.timeoutMs);
     var opts = Object.assign({ signal: ctrl.signal }, options || {});
     return fetch(CONFIG.api + path, opts).then(function (res) {
       return res.text().then(function (text) {
@@ -244,7 +244,8 @@
   function apiUpload(file) {
     var fd = new FormData();
     fd.append('file', file, file.name);
-    return apiFetch('/api/upload', { method: 'POST', body: fd });
+    if (state.sessionId) fd.append('session_id', state.sessionId);
+    return apiFetch('/api/upload', { method: 'POST', body: fd }, 310000);
   }
   function apiCart(sessionId) { return apiFetch('/api/cart/' + encodeURIComponent(sessionId)); }
 
@@ -609,10 +610,11 @@
     if (file.size > CONFIG.maxUploadMb * 1024 * 1024) { state.error = { message: t().errorTooBig, retry: null }; render(); return; }
     state.uploading = true; state.error = null; render();
     apiUpload(file).then(function (res) {
+      if (res.session_id) state.sessionId = res.session_id;
       state.attachments.push({ id: res.attachment_id, filename: res.filename || file.name, summary: res.summary || '' });
     }).catch(function (err) {
       state.error = { message: t().errorUpload + (err && err.message ? ' ' + err.message : ''), retry: null };
-    }).then(function () { state.uploading = false; render(); ui.textarea.focus(); });
+    }).then(function () { state.uploading = false; render(); save(); ui.textarea.focus(); });
   }
 
   // ============================================================ 9. NATIVE CART (only on *.ekt.kz)

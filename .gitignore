@@ -11,6 +11,8 @@ backend/data/catalog.sqlite
 backend/data/catalog.sqlite-journal
 backend/data/dump/
 backend/data/uploads/
+backend/data/attachments.sqlite3
+backend/data/attachments.sqlite3-*
 .DS_Store
 .idea/
 .vscode/

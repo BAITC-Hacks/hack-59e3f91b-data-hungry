@@ -38,6 +38,7 @@ class Attachment:
     filename: str
     kind: str
     summary: str = ""
+    session_id: str = ""
 
 
 def _stubs() -> dict[str, SimpleNamespace]:
@@ -75,14 +76,18 @@ def _stubs() -> dict[str, SimpleNamespace]:
     )
     registry: dict[str, Attachment] = {}
 
-    async def save_and_parse(filename, content, mime):
-        att = Attachment(id=f"att_{len(registry) + 1}", filename=filename, kind="excel" if filename.endswith("xlsx") else "image", summary=f"{len(content)} bytes")
+    async def save_and_parse(filename, content, mime, session_id=""):
+        att = Attachment(id=f"att_{len(registry) + 1}", filename=filename, kind="excel" if filename.endswith("xlsx") else "image", summary=f"{len(content)} bytes", session_id=session_id)
         registry[att.id] = att
         return att
 
+    def get_attachment(att_id, session_id=None):
+        att = registry.get(att_id)
+        return att if att and (session_id is None or att.session_id == session_id) else None
+
     attachments = SimpleNamespace(
         save_and_parse=save_and_parse,
-        get_attachment=lambda att_id: registry.get(att_id),
+        get_attachment=get_attachment,
         image_block=lambda att: {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": ""}},
         text_for_llm=lambda att, max_chars=6000: f"file {att.filename}",
     )
@@ -144,6 +149,17 @@ def test_upload_validation(client):
     assert body["attachment_id"].startswith("att_") and body["kind"] == "excel" and body["filename"] == "spec.xlsx"
     r = client.post("/api/upload", files={"file": ("empty.png", b"", "image/png")})
     assert r.status_code == 400
+
+
+def test_attachment_is_bound_to_upload_session(client):
+    uploaded = client.post("/api/upload", data={"session_id": "owner-session"},
+                           files={"file": ("request.txt", b"Need cable", "text/plain")})
+    assert uploaded.status_code == 200
+    body = uploaded.json()
+    assert body["session_id"] == "owner-session"
+    response = client.post("/api/chat", json={"session_id": "other-session", "message": "прочитай файл",
+                                              "attachment_ids": [body["attachment_id"]]})
+    assert response.status_code == 404
 
 
 def test_confirm_without_pending_is_409(client):

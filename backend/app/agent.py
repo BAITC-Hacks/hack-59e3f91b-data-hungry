@@ -562,7 +562,7 @@ def _user_content(message: str, attachments: list[Any], context: str) -> list[di
     for att in attachments:
         if getattr(att, "kind", None) == "image":
             content.append(attachments_mod.image_block(att))
-            content.append({"type": "text", "text": f"Вложение (фото): {att.filename}"})
+            content.append({"type": "text", "text": attachments_mod.text_for_llm(att)})
         else:
             content.append({"type": "text", "text": attachments_mod.text_for_llm(att)})
     text = message.strip() or ("Посмотри вложение." if attachments else "(пустое сообщение)")
