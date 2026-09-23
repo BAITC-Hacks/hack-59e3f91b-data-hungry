@@ -33,6 +33,13 @@ class ConfirmRequest(BaseModel):
     confirm: bool = True
 
 
+class CartAddRequest(BaseModel):
+    session_id: str | None = None
+    product_id: int = Field(gt=0, lt=2**53)
+    qty: int = Field(default=1, gt=0, le=100000)
+    request_id: str = Field(min_length=16, max_length=64)
+
+
 class Certificate(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -133,6 +140,7 @@ class ChatResponse(BaseModel):
     pending_action: PendingAction | None = None
     cart: Cart
     cart_updated: bool = False
+    cart_applied: list[dict[str, Any]] = Field(default_factory=list)
     escalation: Escalation | None = None
     latency_ms: int = 0
 

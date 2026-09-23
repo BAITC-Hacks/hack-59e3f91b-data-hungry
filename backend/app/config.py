@@ -17,8 +17,8 @@ ATTACHMENT_DB_PATH = Path(os.getenv("EKT_ATTACHMENT_DB_PATH", DATA_DIR / "attach
 
 EKT_SITE = "https://ekt.kz"
 EKT_API_BASE = os.getenv("EKT_API_BASE", "https://ekt.kz/api")
-EKT_API_USER = os.getenv("EKT_API_USER", "apiuser")
-EKT_API_PASS = os.getenv("EKT_API_PASS", "ApiEkt!2026")
+EKT_API_USER = os.getenv("EKT_API_USER", "")
+EKT_API_PASS = os.getenv("EKT_API_PASS", "")
 EKT_CART_URL = "https://ekt.kz/personal/cart/"
 
 # anthropic = Messages API with ANTHROPIC_API_KEY; claude_code = Claude Agent SDK (subscription login / CLAUDE_CODE_OAUTH_TOKEN);

@@ -76,7 +76,7 @@ class EktTool(BaseTool):
 
 
 class SearchProducts(EktTool):
-    """Search the EKT catalog by article, name or technical parameters; returns live-stock product cards."""
+    """Search the EKT catalog by article, name or technical parameters; stock may be cached."""
 
     tool_name: ClassVar[str] = "search_products"
     handler_name: ClassVar[str] = "search_products"
@@ -87,7 +87,7 @@ class SearchProducts(EktTool):
 
 
 class GetProduct(EktTool):
-    """Get one product by id or article with live stock, price and properties."""
+    """Get one product by id or article with stock, price and properties; stock may be cached."""
 
     tool_name: ClassVar[str] = "get_product"
     handler_name: ClassVar[str] = "get_product"

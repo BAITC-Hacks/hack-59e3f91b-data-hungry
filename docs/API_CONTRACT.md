@@ -24,12 +24,13 @@ Response (`ChatResponse`, same shape for every chat-like endpoint):
   "cart": { "items": [ { "product_id": 515291, "name": "...", "article": "...", "qty": 2, "price": 64920, "sum": 129840, "url": "..." } ],
             "count": 1, "total": 129840, "url": "http://host/cart/<session_id>" },
   "cart_updated": false,
+  "cart_applied": [],
   "escalation": { "reason": "...", "contacts": { "phone": "+7 (727) 346-88-88", "whatsapp": "...", "email": "almaty@ekt.kz" } },
   "latency_ms": 2300
 }
 ```
 `pending_action` is non-null when the assistant proposed adding something and is waiting for the user's explicit confirmation.
-The widget renders **Подтвердить / Отмена** buttons for it. Typing «да, добавь» in chat works too.
+The widget renders **Подтвердить / Отмена** buttons for it. Typing «да, добавь» in chat works too. `cart_applied` lists the quantities actually added by a successful cart request, which can differ from the requested quantities if stock or pack multiplicity limits them.
 `certificates` остаётся пустым, пока партнёр не предоставит проверяемые документы по конкретным товарам. Демонстрационные сертификаты и маршрут `/api/certificates/{id}` удалены.
 
 ## POST /api/chat/confirm
@@ -37,6 +38,12 @@ The widget renders **Подтвердить / Отмена** buttons for it. Typ
 { "session_id": "uuid", "action_id": "act_...", "confirm": true }
 ```
 -> `ChatResponse`. On `confirm: true` the cart is updated (quantities are clamped to stock and rounded to pack multiplicity), `cart_updated: true`, and `reply` contains the cart link. On `false` nothing changes.
+
+## POST /api/cart/items
+```json
+{ "session_id": "uuid", "product_id": 515291, "qty": 1, "request_id": "unique-id-for-this-click" }
+```
+-> `ChatResponse`. This endpoint is for an explicit customer click on a product card's **В корзину** button. It adds without a second confirmation, but still rechecks live stock and pack multiplicity. The widget generates a new `request_id` for each click and reuses it on a retry to avoid duplicate additions. `cart_applied` reports the quantity added; `cart_updated` is false when nothing could be added. The chat agent does not use this endpoint: its add flow remains a proposal followed by `/api/chat/confirm` or an unambiguous confirmation message.
 
 ## POST /api/upload  (multipart/form-data, fields `file`, optional `session_id`)
 Accepted: jpg/jpeg/png/webp/gif/bmp/tif/tiff; xlsx/xlsm/xls; docx/doc; pptx/ppt; odt/ods/odp; txt/md/csv/log; PDF; mp3/wav/m4a/ogg/oga/flac/webm/weba/mp4/mpeg/mpga. Max 15 MB.
@@ -59,7 +66,7 @@ For local testing only, set `ENABLE_FILE_LAB=1` and bind the backend to `127.0.0
 
 ## GET /api/cart/{session_id}  -> `cart` object (see above)
 ## DELETE /api/cart/{session_id}/items/{product_id} -> `cart` object
-## GET /cart/{session_id} -> HTML cart page (server-rendered), links to product pages on ekt.kz
+## GET /cart/{session_id} -> HTML prototype cart page (server-rendered), links to product pages on ekt.kz
 ## GET /api/products/search?q=...&limit=10 -> `{ "products": [...] }` (same product card shape)
 ## GET /api/products/{id} -> product card + `detail` (stores, properties, description)
 ## GET /api/health -> `{ "ok": true, "products": 15035, "model": "gpt-4.1-mini", "llm_configured": true }`
@@ -72,15 +79,16 @@ The widget creates a floating chat button (bottom-right), a chat panel (desktop:
 persists `session_id` in `localStorage` (`ekt_ai_session`), sends `page_url: location.href`.
 
 ### Native cart mode (when embedded on ekt.kz itself)
-If `location.hostname` ends with `ekt.kz`, after a confirmed `add_to_cart` the widget ALSO adds each item to the real Bitrix cart:
+The external demo's prototype cart is separate from the customer's cart on ekt.kz. Browser cookies and same-origin restrictions prevent the demo domain from adding products to the customer's EKT session. Only when the widget runs first-party on ekt.kz can it attempt to sync items to the site's Bitrix cart after a direct button click or confirmed chat action:
 ```js
-fetch('/local/templates/template/ajax/basket.php', { method: 'POST', headers: {'X-Requested-With': 'XMLHttpRequest'},
-  body: new URLSearchParams({ action: 'add2basket', id: String(product_id), quantity: String(qty), kratnost: '1' }) })
+fetch('/local/templates/template/ajax/ajax.php', { method: 'POST', credentials: 'same-origin',
+  headers: {'X-Requested-With': 'XMLHttpRequest'},
+  body: new URLSearchParams({ action: 'add2basket', id: String(product_id), quantity: String(added_qty), kratnost: '1' }) })
 ```
-and shows the link `https://ekt.kz/personal/cart/` instead of the prototype cart page. (The site's own "в корзину" button does exactly this request.)
+The request sends only the newly added quantity, not the accumulated prototype-cart quantity. A link to `https://ekt.kz/personal/cart/` must be shown only after a successful same-origin sync; otherwise the widget keeps the prototype-cart link and reports the sync error. This integration still needs end-to-end verification with EKT before it can be treated as a production checkout path.
 
 ## Safety rules enforced server-side
-- Cart changes happen ONLY through a confirmed `pending_action` (button or explicit "да/добавь/подтверждаю" message). The LLM cannot mutate the cart directly.
+- The chat agent can only propose a `pending_action`; the cart changes after the customer's explicit confirmation. A direct product-card **В корзину** click is itself an explicit add request and needs no second confirmation.
 - Quantity is clamped to live stock (detail API, fetched at confirmation time) and to pack multiplicity (`KRATNOST_MIN`).
 - Prices/stock in replies come from tool results, never from the model's memory. If live detail is unavailable, the indexed list price is not presented as current and stock is `unknown`.
 - No payment data is requested or stored.

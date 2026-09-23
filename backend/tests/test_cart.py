@@ -72,10 +72,58 @@ async def test_confirm_clamps_to_stock_and_kratnost(store):
     assert store.pending("s1") is None
 
 
-async def test_confirm_min_is_kratnost(store):
+async def test_confirm_does_not_increase_request_to_minimum_pack(store):
     action = await store.propose("s1", [{"product_id": 2, "qty": 2}])
+    assert "товар не будет добавлен" in action["items"][0]["note"]
     result = await store.confirm("s1", action["action_id"])
+    assert result["applied"] == []
+    assert "минимальная партия 5 шт" in result["skipped"][0]["reason"]
+    assert "запрошено 2 шт" in result["skipped"][0]["reason"]
+    assert result["cart"]["count"] == 0
+
+
+async def test_confirm_pack_rounding_respects_existing_cart_and_stock(store):
+    first = await store.propose("s1", [{"product_id": 2, "qty": 15}])
+    await store.confirm("s1", first["action_id"])
+    second = await store.propose("s1", [{"product_id": 2, "qty": 10}])
+    assert "будет добавлено 5 шт" in second["items"][0]["note"]
+    result = await store.confirm("s1", second["action_id"])
     assert result["applied"][0]["qty"] == 5
+    assert result["cart"]["items"][0]["qty"] == 20
+    third = await store.propose("s1", [{"product_id": 2, "qty": 5}])
+    result = await store.confirm("s1", third["action_id"])
+    assert result["applied"] == []
+    assert "минимальной партии 5 шт" in third["items"][0]["note"]
+    assert result["cart"]["items"][0]["qty"] == 20
+
+
+async def test_confirm_rechecks_reduced_live_stock_before_adding(store, monkeypatch):
+    stock = 23
+
+    async def changing_detail(pid: int, *, ttl=None):
+        assert pid == 2
+        detail = dict(DETAILS[2])
+        detail["stores"] = [{"name": "Алматы", "quantity": stock}]
+        return detail
+
+    monkeypatch.setattr(ekt_api, "fetch_detail", changing_detail)
+    action = await store.propose("s1", [{"product_id": 2, "qty": 10}])
+    stock = 4
+    result = await store.confirm("s1", action["action_id"])
+    assert result["applied"] == []
+    assert "остаток 4 шт меньше минимальной партии 5 шт" in result["skipped"][0]["reason"]
+    assert result["cart"]["count"] == 0
+
+
+async def test_direct_add_is_idempotent_and_never_adds_more_than_requested(store):
+    too_small = await store.add_requested("s1", [{"product_id": 2, "qty": 2}], request_id="click-small")
+    assert too_small["applied"] == []
+    assert store.get_json("s1")["count"] == 0
+    first = await store.add_requested("s1", [{"product_id": 2, "qty": 7}], request_id="click-7")
+    assert first["applied"][0]["qty"] == 5
+    repeated = await store.add_requested("s1", [{"product_id": 2, "qty": 7}], request_id="click-7")
+    assert repeated == first
+    assert store.get_json("s1")["items"][0]["qty"] == 5
 
 
 async def test_confirm_never_exceeds_stock_across_confirmations(store):

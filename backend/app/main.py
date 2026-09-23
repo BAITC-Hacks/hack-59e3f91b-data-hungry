@@ -19,6 +19,7 @@ from . import agent, attachments, catalog, config, ekt_api, hybrid_search, recog
 from .cart import PendingActionError, cart_store
 from .schemas import (
     Cart,
+    CartAddRequest,
     ChatRequest,
     ChatResponse,
     ConfirmRequest,
@@ -125,12 +126,14 @@ async def post_confirm(req: ConfirmRequest) -> Any:
             reply = agent.render_confirmation(result, lang)
             agent.record_exchange(session, "[Кнопка «Подтвердить»]", reply)
             cart_updated = bool(result["applied"])
+            cart_applied = result["applied"]
             log.info("confirm sid=%s applied=%d skipped=%d", session.id, len(result["applied"]), len(result["skipped"]))
         else:
             cart_store.reject(session.id, req.action_id)
             reply = agent.render_rejection(lang)
             agent.record_exchange(session, "[Кнопка «Отмена»]", reply)
             cart_updated = False
+            cart_applied = []
     return {
         "session_id": session.id,
         "reply": reply,
@@ -138,6 +141,7 @@ async def post_confirm(req: ConfirmRequest) -> Any:
         "pending_action": None,
         "cart": cart_store.get_json(session.id),
         "cart_updated": cart_updated,
+        "cart_applied": cart_applied,
         "escalation": None,
         "latency_ms": int((time.perf_counter() - t0) * 1000),
     }
@@ -216,6 +220,35 @@ async def file_lab_parse(request: Request, file: UploadFile) -> Any:
 
 
 # ---- cart -------------------------------------------------------------------------------------------------------
+@app.post("/api/cart/items", response_model=ChatResponse)
+async def post_cart_item(req: CartAddRequest) -> Any:
+    """A click on the product card is the customer's explicit add request."""
+    t0 = time.perf_counter()
+    session = session_store.get_or_create(req.session_id)
+    async with session.lock:
+        try:
+            result = await cart_store.add_requested(
+                session.id,
+                [{"product_id": req.product_id, "qty": req.qty}],
+                request_id=req.request_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        reply = agent.render_confirmation(result, normalize_lang(session.lang))
+        agent.record_exchange(session, "[Кнопка «В корзину»]", reply)
+    return {
+        "session_id": session.id,
+        "reply": reply,
+        "products": [],
+        "pending_action": None,
+        "cart": result["cart"],
+        "cart_updated": bool(result["applied"]),
+        "cart_applied": result["applied"],
+        "escalation": None,
+        "latency_ms": int((time.perf_counter() - t0) * 1000),
+    }
+
+
 @app.get("/api/cart/{session_id}", response_model=Cart)
 async def get_cart(session_id: str) -> Any:
     return cart_store.get_json(_check_session_id(session_id))
@@ -230,7 +263,7 @@ async def delete_cart_item(session_id: str, product_id: int = ProductId) -> Any:
 async def cart_page(request: Request, session_id: str) -> Any:
     cart = cart_store.get_json(_check_session_id(session_id))
     return templates.TemplateResponse(
-        request, "cart.html", {"cart": cart, "session_id": session_id, "site": config.EKT_SITE, "checkout_url": config.EKT_CART_URL}
+        request, "cart.html", {"cart": cart, "session_id": session_id, "site": config.EKT_SITE}
     )
 
 

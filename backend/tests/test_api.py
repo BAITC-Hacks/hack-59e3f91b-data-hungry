@@ -243,10 +243,34 @@ def test_button_add_confirm_and_cart_page(client):
     assert client.get(f"/api/cart/{sid}").json()["count"] == 1
     r = client.get(f"/cart/{sid}")
     assert r.status_code == 200 and "text/html" in r.headers["content-type"]
-    assert PRODUCT["name"] in r.text and "ekt.kz/personal/cart" in r.text and "843 960" in r.text
+    assert PRODUCT["name"] in r.text and "Корзина демо-ассистента" in r.text and "843 960" in r.text
+    assert "Оформить заказ на ekt.kz" not in r.text
     assert client.delete(f"/api/cart/{sid}/items/{PRODUCT['id']}").json()["count"] == 0
     assert "Корзина пуста" in client.get(f"/cart/{sid}").text
     assert client.get("/cart/bad id!").status_code == 400
+
+
+def test_product_button_adds_once_without_second_confirmation(client):
+    sid = "direct-click-session-0001"
+    payload = {"session_id": sid, "product_id": PRODUCT["id"], "qty": 1,
+               "request_id": "click-unique-0000001"}
+    first = client.post("/api/cart/items", json=payload)
+    assert first.status_code == 200
+    body = first.json()
+    assert body["pending_action"] is None and body["cart_updated"] is True
+    assert body["cart_applied"][0]["qty"] == 1
+    assert body["cart"]["items"][0]["qty"] == 1
+    assert body["cart"]["url"] in body["reply"]
+    repeated = client.post("/api/cart/items", json=payload)
+    assert repeated.status_code == 200
+    assert repeated.json()["cart"]["items"][0]["qty"] == 1
+    payload["request_id"] = "click-unique-0000002"
+    payload["qty"] = 20
+    capped = client.post("/api/cart/items", json=payload)
+    assert capped.status_code == 200
+    assert capped.json()["cart_applied"][0]["qty"] == 12
+    assert capped.json()["cart"]["items"][0]["qty"] == 13
+    assert client.post("/api/cart/items", json={**payload, "request_id": "short"}).status_code == 422
 
 
 def test_textual_rejection(client):

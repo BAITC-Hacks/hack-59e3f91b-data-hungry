@@ -1,7 +1,8 @@
-"""Prototype cart with an explicit-confirmation gate.
+"""Prototype cart with live-stock validation.
 
 The LLM can only *propose* (`propose`); the cart changes only when `confirm` is called with the matching
-action_id, coming either from the widget's «Подтвердить» button or from an explicit "да, добавь" message.
+action_id, coming from an explicit chat confirmation. A direct product-card click uses `add_requested`,
+which runs the same validation and final stock check without another confirmation.
 At confirmation time stock is re-fetched live, quantities are clamped to stock and rounded down to the pack
 multiplicity (KRATNOST_MIN). Everything is in memory (hackathon prototype).
 """
@@ -48,6 +49,7 @@ class CartStore:
     def __init__(self) -> None:
         self._carts: dict[str, dict[int, dict[str, Any]]] = {}
         self._pending: dict[str, dict[str, Any]] = {}
+        self._completed_adds: dict[tuple[str, str], tuple[float, list[dict[str, Any]], dict[str, Any]]] = {}
 
     # ---- read ---------------------------------------------------------------------------------------------------
     def get_json(self, session_id: str) -> dict[str, Any]:
@@ -73,6 +75,33 @@ class CartStore:
             del self._pending[session_id]
             return None
         return copy.deepcopy(action)
+
+    async def add_requested(self, session_id: str, items: list[dict[str, Any]], *,
+                            request_id: str | None = None) -> dict[str, Any]:
+        """Apply an explicit customer add request in one step, checking live stock.
+
+        Clicking the widget button is the customer's explicit add request.
+        Reuse proposal validation and the final live-stock check without a
+        second confirmation step; chat-agent proposals remain separate.
+        """
+        request_items = copy.deepcopy(items)
+        if request_id:
+            key = (session_id, request_id)
+            previous = self._completed_adds.get(key)
+            if previous and time.time() - previous[0] < PENDING_TTL:
+                if previous[1] != request_items:
+                    raise ValueError("request_id уже использован для другого товара или количества")
+                result = copy.deepcopy(previous[2])
+                result["cart"] = self.get_json(session_id)
+                return result
+        action = await self.propose(session_id, items)
+        result = await self.confirm(session_id, action["action_id"])
+        if request_id:
+            self._completed_adds[(session_id, request_id)] = (time.time(), request_items, copy.deepcopy(result))
+            if len(self._completed_adds) > 1000:
+                cutoff = time.time() - PENDING_TTL
+                self._completed_adds = {key: value for key, value in self._completed_adds.items() if value[0] >= cutoff}
+        return result
 
     # ---- propose / confirm / reject ---------------------------------------------------------------------------
     async def propose(self, session_id: str, items: list[dict[str, Any]]) -> dict[str, Any]:
@@ -110,15 +139,22 @@ class CartStore:
             price = (detail or {}).get("price")
             max_qty = ekt_api.total_quantity(detail) if detail else 0
             k = kratnost_of(detail)
+            existing = self._carts.get(session_id, {}).get(pid, {}).get("qty", 0)
+            room = max_qty - existing
             note: str | None = None
             if detail is None:
-                note = "не удалось проверить остаток — будет проверен при подтверждении"
+                note = "не удалось проверить остаток — добавление возможно только после проверки"
             elif max_qty <= 0:
                 note = "нет в наличии"
-            elif qty > max_qty:
-                note = f"на складе только {max_qty} шт"
+            elif qty < k:
+                note = f"минимальная партия {k} шт — запрошено {qty} шт, товар не будет добавлен"
+            elif room < k:
+                note = f"доступно для добавления {max(room, 0)} шт — меньше минимальной партии {k} шт"
+            elif qty > room:
+                addable = (room // k) * k
+                note = f"на складе только {max_qty} шт; доступно для добавления {room} шт — будет добавлено {addable} шт"
             elif qty % k:
-                note = f"кратность упаковки {k} шт — будет добавлено {max((qty // k) * k, k)} шт"
+                note = f"кратность упаковки {k} шт — будет добавлено {(qty // k) * k} шт"
             out_items.append(
                 {
                     "product_id": pid,
@@ -179,6 +215,10 @@ class CartStore:
             if stock <= 0:
                 skipped.append({"product_id": pid, "name": name, "reason": "нет в наличии"})
                 continue
+            if requested < k:
+                skipped.append({"product_id": pid, "name": name,
+                                "reason": f"минимальная партия {k} шт; запрошено {requested} шт"})
+                continue
             if room < k:
                 reason = (
                     f"в корзине уже {existing} шт — это всё, что есть на складе"
@@ -187,8 +227,8 @@ class CartStore:
                 )
                 skipped.append({"product_id": pid, "name": name, "reason": reason})
                 continue
-            qty = max((min(requested, room) // k) * k, k)
-            price = detail.get("price") if detail.get("price") is not None else item.get("price")
+            qty = (min(requested, room) // k) * k
+            price = detail.get("price")
             cart[pid] = {
                 "product_id": pid,
                 "name": detail.get("name") or name,
@@ -199,7 +239,8 @@ class CartStore:
                 "image": detail.get("image") or item.get("image"),
                 "kratnost": k,
             }
-            applied.append({"product_id": pid, "name": cart[pid]["name"], "qty": qty, "requested_qty": requested, "price": price})
+            applied.append({"product_id": pid, "name": cart[pid]["name"], "qty": qty,
+                            "requested_qty": requested, "price": price, "kratnost": k})
             if qty < requested and requested > room:
                 notes.append(f"{name}: добавлено {qty} шт вместо {requested} — на складе {stock} шт")
             elif qty != requested:

@@ -35,7 +35,8 @@
     maxUploadMb: 15,
     nativeCart: /(^|\.)ekt\.kz$/i.test(location.hostname),
     nativeCartUrl: 'https://ekt.kz/personal/cart/',
-    nativeBasketEndpoint: '/local/templates/template/ajax/basket.php',
+    nativeBasketEndpoint: '/local/templates/template/ajax/ajax.php',
+    nativeBasketRefreshEndpoint: '/local/templates/template/ajax/basketupdate.php',
     mobileQuery: '(max-width: 640px)',
     // PT Sans = the site font. @import inside a shadow root is unreliable, so a <link> goes into document.head (font faces are document-wide).
     fontUrl: 'https://fonts.googleapis.com/css2?family=PT+Sans:wght@400;700&display=swap'
@@ -58,12 +59,14 @@
       ],
       art: 'Арт.', addToCart: 'В корзину', onSite: 'На сайте ↗',
       inStock: 'В наличии: {n} шт', outOfStock: 'Нет в наличии', onOrder: 'Под заказ',
-      certs: 'Сертификаты', addMsg: 'Добавь в корзину: {name} (id {id}), 1 шт',
+      certs: 'Сертификаты', addMsg: 'В корзину: {name} — {qty} шт',
       pendingTitle: 'Добавить в корзину?', confirm: 'Подтвердить', cancel: 'Отмена', max: 'макс. {n}', pcs: 'шт',
       cartItems: ['позиция', 'позиции', 'позиций'], cartOpen: 'Открыть ↗', cartLink: 'Открыть корзину ↗',
+      nativeCartLink: 'Проверить корзину ekt.kz ↗',
       escalation: 'Связаться с менеджером', phone: 'Телефон', whatsapp: 'WhatsApp', email: 'E-mail',
       errorSend: 'Не удалось отправить.', errorTimeout: 'Сервер не ответил за 65 секунд.', retry: 'Повторить',
       errorUpload: 'Не удалось распознать файл.', errorTooBig: 'Файл больше 15 МБ.', uploading: 'Загрузка…',
+      nativeSyncError: 'Товар есть в корзине демо, но не удалось перенести его в корзину ekt.kz. Откройте карточку товара на сайте.',
       uploadStages: { queued: 'Ожидает обработки…', checking_cache: 'Проверяем ранее распознанные файлы…',
         parsing: 'Извлекаем текст и таблицы…', recognizing: 'Распознаём содержимое…', ready: 'Готово' },
       lookAttachment: 'Посмотри вложение'
@@ -83,12 +86,14 @@
       ],
       art: 'Арт.', addToCart: 'Себетке қосу', onSite: 'Сайтта ↗',
       inStock: 'Қоймада: {n} дана', outOfStock: 'Қоймада жоқ', onOrder: 'Тапсырыспен',
-      certs: 'Сертификаттар', addMsg: 'Добавь в корзину: {name} (id {id}), 1 шт',
+      certs: 'Сертификаттар', addMsg: 'Себетке: {name} — {qty} дана',
       pendingTitle: 'Себетке қосу керек пе?', confirm: 'Растау', cancel: 'Бас тарту', max: 'макс. {n}', pcs: 'дана',
       cartItems: ['тауар', 'тауар', 'тауар'], cartOpen: 'Ашу ↗', cartLink: 'Себетті ашу ↗',
+      nativeCartLink: 'ekt.kz себетін тексеру ↗',
       escalation: 'Менеджермен байланысу', phone: 'Телефон', whatsapp: 'WhatsApp', email: 'E-mail',
       errorSend: 'Жіберу мүмкін болмады.', errorTimeout: 'Сервер 65 секунд ішінде жауап бермеді.', retry: 'Қайталау',
       errorUpload: 'Файл танылмады.', errorTooBig: 'Файл 15 МБ-тан үлкен.', uploading: 'Жүктелуде…',
+      nativeSyncError: 'Тауар демо себетінде бар, бірақ ekt.kz себетіне көшіру мүмкін болмады. Сайттағы тауар бетін ашыңыз.',
       uploadStages: { queued: 'Кезекте…', checking_cache: 'Бұрынғы нәтижені тексереміз…',
         parsing: 'Мәтін мен кестелерді оқимыз…', recognizing: 'Мазмұнды танимыз…', ready: 'Дайын' },
       lookAttachment: 'Тіркемені қара'
@@ -199,6 +204,7 @@
     messages: [],      // {role:'user'|'assistant', text, kind?:'welcome', products?, escalation?, cartUpdated?, files?}
     pending: null,     // pending_action from the API
     cart: null,        // cart object from the API
+    nativeSyncAccepted: false,
     attachments: [],   // uploaded files waiting to be sent: {id, filename, summary}
     uploading: false,
     uploadStage: 'queued',
@@ -216,7 +222,8 @@
     if (state.sessionId) storageSet('localStorage', CONFIG.sessionKey, state.sessionId);
     storageSet('sessionStorage', CONFIG.convKey, JSON.stringify({
       sessionId: state.sessionId, lang: state.lang, open: state.open,
-      messages: state.messages.slice(-60), pending: state.pending, cart: state.cart
+      messages: state.messages.slice(-60), pending: state.pending, cart: state.cart,
+      nativeSyncAccepted: state.nativeSyncAccepted
     }));
   }
 
@@ -232,6 +239,7 @@
       state.messages = Array.isArray(c.messages) ? c.messages : [];
       state.pending = c.pending || null;
       state.cart = c.cart || null;
+      state.nativeSyncAccepted = !!c.nativeSyncAccepted;
       state.open = !!c.open;
       return true;
     } catch (e) { return false; }
@@ -263,6 +271,9 @@
   }
   function apiConfirm(actionId, confirm) {
     return postJson('/api/chat/confirm', { session_id: state.sessionId, action_id: actionId, confirm: !!confirm });
+  }
+  function apiCartAdd(productId, qty, requestId) {
+    return postJson('/api/cart/items', { session_id: state.sessionId, product_id: productId, qty: qty, request_id: requestId });
   }
   function apiUpload(file) {
     var fd = new FormData();
@@ -366,7 +377,7 @@
     return b === 1 ? forms[0] : forms[2];
   }
   function isMobile() { return window.matchMedia && window.matchMedia(CONFIG.mobileQuery).matches; }
-  function cartUrl() { return CONFIG.nativeCart ? CONFIG.nativeCartUrl : (state.cart && state.cart.url) || ''; }
+  function cartUrl() { return (state.cart && state.cart.url) || ''; }
 
   /** Availability: dot + text, green (in stock, N шт) / red (none) / orange (stock unknown -> "Под заказ"). */
   function stockBadge(p) {
@@ -380,6 +391,7 @@
   var brokenImages = {}; // image URLs that failed once: don't re-request them on every re-render
 
   function renderProduct(p) {
+    var packQty = Math.max(1, Number(p.kratnost) || 1);
     var thumb = el('div', { class: 'thumb', html: ICON.box });
     if (p.image && !brokenImages[p.image]) {
       var img = el('img', { src: p.image, alt: '' }); // no loading=lazy: a detached lazy image never loads
@@ -406,9 +418,9 @@
       })) : null,
       p.reason ? el('div', { class: 'reason' }, [p.reason]) : null,
       el('div', { class: 'card-actions' }, [
-        p.stock_status === 'in_stock' ? el('button', { class: 'btn primary', type: 'button', onclick: function () {
-          sendMessage(fill(t().addMsg, { name: p.name || '', id: p.id }));
-        } }, [t().addToCart]) : null,
+        p.stock_status === 'in_stock' && Number(p.quantity) >= packQty ? el('button', { class: 'btn primary', type: 'button',
+          disabled: state.sending, onclick: function () { addProduct(p, packQty); } },
+        [t().addToCart + (packQty > 1 ? ' · ' + packQty + ' ' + t().pcs : '')]) : null,
         safeUrl(p.url) ? el('a', { class: 'btn outline', href: safeUrl(p.url), target: '_blank', rel: 'noopener noreferrer' }, [t().onSite]) : null
       ])
     ]);
@@ -440,7 +452,11 @@
     if (isUser && m.files && m.files.length) node.appendChild(el('div', { class: 'files' }, ['📎 ' + m.files.join(', ')]));
     if (!isUser && m.products && m.products.length) node.appendChild(el('div', { class: 'cards' }, m.products.map(renderProduct)));
     if (!isUser && m.cartUpdated && cartUrl()) {
-      node.appendChild(el('div', { class: 'cartlink' }, [el('a', { class: 'btn primary', href: cartUrl(), target: '_blank', rel: 'noopener noreferrer' }, [t().cartLink])]));
+      node.appendChild(el('div', { class: 'cartlink' }, [
+        el('a', { class: 'btn primary', href: cartUrl(), target: '_blank', rel: 'noopener noreferrer' }, [t().cartLink]),
+        CONFIG.nativeCart && state.nativeSyncAccepted ? el('a', { class: 'btn outline', href: CONFIG.nativeCartUrl,
+          target: '_blank', rel: 'noopener noreferrer' }, [t().nativeCartLink]) : null
+      ]));
     }
     if (!isUser && m.escalation) node.appendChild(renderEscalation(m.escalation));
     return node;
@@ -631,6 +647,26 @@
     });
     state.pending = res.pending_action || null;
     if (res.cart) state.cart = res.cart;
+    if (CONFIG.nativeCart && res.cart_applied && res.cart_applied.length) {
+      state.nativeSyncAccepted = false;
+      nativeCartAdd(res.cart_applied).then(function () {
+        state.nativeSyncAccepted = true;
+        render(); save();
+      }).catch(function () {
+        state.error = { message: t().nativeSyncError, retry: null };
+        render(); save();
+      });
+    }
+  }
+
+  /** Clicking the product button is the explicit add request; no second confirmation is shown. */
+  function addProduct(p, qty) {
+    if (state.sending || state.uploading) return Promise.resolve();
+    var requestId = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() :
+      ('btn-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2));
+    state.messages.push({ role: 'user', text: fill(t().addMsg, { name: p.name || ('#' + p.id), qty: qty }) });
+    if (!state.open) open();
+    return runRequest(function () { return apiCartAdd(p.id, qty, requestId); });
   }
 
   /** Send a chat message (text and/or the uploaded attachments). */
@@ -646,13 +682,10 @@
     return runRequest(function () { return apiChat(outgoing, ids); });
   }
 
-  /** Confirm / cancel the pending add-to-cart action; on ekt.kz also push items to the native Bitrix cart. */
+  /** Confirm / cancel an agent proposal. A product-card button already carries its own authorization. */
   function confirmPending(pa, yes) {
-    var items = (pa.items || []).slice();
     state.pending = null;
-    return runRequest(function () { return apiConfirm(pa.action_id, yes); }, function (res) {
-      if (yes && res.cart_updated && CONFIG.nativeCart) nativeCartAdd(items, res.cart);
-    });
+    return runRequest(function () { return apiConfirm(pa.action_id, yes); });
   }
 
   function onFilePicked() {
@@ -670,22 +703,31 @@
   }
 
   // ============================================================ 9. NATIVE CART (only on *.ekt.kz)
-  /**
-   * Replays a confirmed add_to_cart into the site's own Bitrix basket, one request per item -
-   * the same request the site's "В корзину" button sends. Quantities: the server-clamped qty from
-   * the returned cart when available, else the proposed qty clamped to max_qty. Failures are silent.
-   */
-  function nativeCartAdd(items, cart) {
-    var inCart = {};
-    ((cart && cart.items) || []).forEach(function (c) { inCart[String(c.product_id)] = Number(c.qty); });
-    items.forEach(function (it) {
-      var qty = inCart[String(it.product_id)];
-      if (!(qty > 0)) qty = Math.max(1, Math.min(Number(it.qty) || 1, Number(it.max_qty) || Infinity));
-      fetch(CONFIG.nativeBasketEndpoint, {
+  /** Best-effort first-party Bitrix sync. The demo-domain cart remains the source of truth here. */
+  function nativeCartAdd(items) {
+    if (!CONFIG.nativeCart) return Promise.resolve();
+    return Promise.all(items.map(function (it) {
+      return fetch(CONFIG.nativeBasketEndpoint, {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'X-Requested-With': 'XMLHttpRequest' },
-        body: new URLSearchParams({ action: 'add2basket', id: String(it.product_id), quantity: String(qty), kratnost: '1' })
-      }).catch(function () { /* the prototype cart still has the item */ });
+        body: new URLSearchParams({ action: 'add2basket', id: String(it.product_id),
+          quantity: String(it.qty), kratnost: String(it.kratnost || 1) })
+      }).then(function (res) {
+        if (!res.ok) throw new Error('Bitrix HTTP ' + res.status);
+        return res.text();
+      }).then(function (body) {
+        try {
+          var data = JSON.parse(body);
+          if (data && (data.success === false || data.error)) throw new Error('Bitrix rejected add');
+        } catch (err) {
+          if (err.message === 'Bitrix rejected add') throw err;
+        }
+      });
+    })).then(function () {
+      return fetch(CONFIG.nativeBasketRefreshEndpoint, { credentials: 'same-origin' }).then(function (res) {
+        if (!res.ok) throw new Error('Bitrix refresh HTTP ' + res.status);
+      });
     });
   }
 

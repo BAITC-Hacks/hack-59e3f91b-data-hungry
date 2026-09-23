@@ -11,7 +11,7 @@ One file (`widget.js`), vanilla JS, Shadow DOM, no build step, no dependencies. 
 
 | attribute    | default              | meaning                                                        |
 |--------------|----------------------|----------------------------------------------------------------|
-| `data-api`   | origin of the script | backend base URL (`POST /api/chat`, `/api/chat/confirm`, `/api/upload`, `GET /api/cart/{id}`) |
+| `data-api`   | origin of the script | backend base URL (`POST /api/chat`, `/api/chat/confirm`, `/api/cart/items`, `/api/upload`, `GET /api/cart/{id}`) |
 | `data-lang`  | `ru`                 | `ru` or `kk`; the user can switch in the header (RU / KZ)      |
 | `data-open`  | –                    | `1` opens the panel on the first visit                          |
 | `data-title` | `Ассистент EKT`      | header title (shown under the logo)                             |
@@ -41,11 +41,19 @@ State: `session_id` in `localStorage['ekt_ai_session']`; the conversation, pendi
   text and an underlined link. Quick-reply chips: white, blue border and text, 20 px radius. Panel radius 8 px.
 - Mobile (<= 640 px): full-screen panel, launcher hidden while open, «Менеджер» collapses to an icon, 16 px input.
 
+Clicking **В корзину** on a product card is the customer's explicit request to add that product. The widget sends
+`POST /api/cart/items` and updates the prototype cart immediately after the backend checks live stock. The chat agent
+has a separate two-step flow: it proposes items, then waits for **Подтвердить** or an unambiguous confirmation message
+before changing the cart.
+
 ## Native cart mode (on ekt.kz)
 
-When `location.hostname` ends with `ekt.kz`, a confirmed *add to cart* is also replayed into the site's own
-Bitrix basket (`POST /local/templates/template/ajax/basket.php`, `action=add2basket`) and the cart links point to
-`https://ekt.kz/personal/cart/` instead of the prototype cart page.
+The external demo uses its own prototype cart. It cannot update a visitor's ekt.kz cart across domains because the
+site's session cookie and basket endpoint are first-party. When the widget runs on ekt.kz itself, it attempts to sync
+newly added quantities to the site's Bitrix basket via same-origin
+`POST /local/templates/template/ajax/ajax.php` (`action=add2basket`). Only a successful sync can lead to the EKT cart
+link; on failure, the prototype cart link remains available. This integration needs end-to-end verification with EKT
+before production use.
 
 ## Local demo
 
@@ -69,7 +77,7 @@ down the widget shows a red "Не удалось отправить — Повт
 2. Open `bookmarklet.js`, replace `https://HOST` with that URL and copy the `javascript:(...)()` line.
 3. In the browser create a new bookmark and paste the line into its URL field.
 4. Open any product page on https://ekt.kz and click the bookmark: the launcher appears bottom-right.
-   Confirmed items go into the real site cart (see native cart mode above).
+   Test cart syncing with a disposable session and verify the resulting basket on ekt.kz (see native cart mode above).
 
 Notes: the backend must answer CORS from `https://ekt.kz` (it sends `*`). If the site ever adds a strict
 `Content-Security-Policy` for scripts, the bookmarklet is blocked — use the `<script>` tag embedding instead.
