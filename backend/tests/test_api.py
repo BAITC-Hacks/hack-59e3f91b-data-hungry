@@ -125,6 +125,12 @@ def test_health(client):
     assert body["ok"] is True and body["products"] == 1 and body["model"] and body["llm_configured"] is False
 
 
+def test_root_redirects_to_demo(client):
+    r = client.get("/", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["location"] == "/widget/demo/index.html"
+
+
 def test_search_and_product(client):
     r = client.get("/api/products/search", params={"q": "027228"})
     assert r.status_code == 200

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Deploy exactly the committed repository plus local catalog data and .env to the user's Brev VM.
-# Example: APP_PORT=8881 PUBLIC_BASE_URL=https://jupyter-uct8xo9mo.gobrev.dev bash deploy/push_to_vm.sh
+# Example: APP_PORT=8881 PUBLIC_BASE_URL=https://web-uct8xo9mo.gobrev.dev bash deploy/push_to_vm.sh
 set -euo pipefail
 
 VM_HOST="${VM_HOST:-distinctive-orange-mammal}"

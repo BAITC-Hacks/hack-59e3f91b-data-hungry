@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi import FastAPI, Form, HTTPException, Path as PathParam, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -66,6 +66,11 @@ templates.env.filters["money"] = agent.fmt_money
 
 if WIDGET_DIR.is_dir():
     app.mount("/widget", StaticFiles(directory=str(WIDGET_DIR)), name="widget")
+
+
+@app.get("/", include_in_schema=False)
+async def root() -> RedirectResponse:
+    return RedirectResponse(url="/widget/demo/index.html", status_code=302)
 
 
 def _check_session_id(session_id: str) -> str:
