@@ -21,7 +21,7 @@ from typing import Any
 import anthropic
 import openai
 
-from . import agent_openai, agent_sdk, analogs, attachments as attachments_mod, catalog, config, ekt_api, knowledge
+from . import agent_openai, agent_sdk, analogs, attachments as attachments_mod, catalog, config, ekt_api, hybrid_search, knowledge
 from .cart import PendingActionError, cart_store
 from .sessions import Session
 
@@ -436,16 +436,11 @@ async def _tool_search_products(inp: dict[str, Any], state: TurnState) -> str:
     if not query:
         return "Ошибка: пустой запрос."
     limit = max(1, min(int(inp.get("limit") or 5), 10))
-    found = catalog.get_by_article(query)
-    seen = {p["id"] for p in found}
-    # Over-fetch so available products can be ranked first.
-    for p in catalog.search(query, limit=limit * 2, brand=inp.get("brand") or None, category=inp.get("category") or None):
-        if p["id"] not in seen:
-            seen.add(p["id"])
-            found.append(p)
+    found = await hybrid_search.search(query, limit=limit, brand=inp.get("brand") or None,
+                                       category=inp.get("category") or None)
     if not found:
         return _dump({"results": [], "hint": "Ничего не найдено. Попробуй другой запрос (без бренда, по ключевым словам) или эскалацию."})
-    cards = rank_in_stock_first(await catalog.product_cards(found[: limit * 2]))[:limit]
+    cards = await catalog.product_cards(found)
     state.add_products(cards)
     payload: dict[str, Any] = {"results": [_card_for_llm(c) for c in cards]}
     unmatched = unmatched_query_tokens(query, cards)

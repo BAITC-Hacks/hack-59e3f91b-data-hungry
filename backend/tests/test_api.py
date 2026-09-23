@@ -18,7 +18,7 @@ for _name in ("catalog", "knowledge", "analogs", "attachments"):
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app import agent, config, ekt_api, main  # noqa: E402
+from app import agent, config, ekt_api, hybrid_search, main  # noqa: E402
 
 PRODUCT = {"id": 515291, "name": "027228 АВ DRX250 MT 3ф 160А 18ka Legrand", "article": "200300285_", "price": 64920,
            "image": None, "url": "https://ekt.kz/catalog/x/027228/", "cat1": "nizkovoltnaya_apparatura", "cat2": None, "cat3": None,
@@ -99,6 +99,8 @@ def isolated(monkeypatch):
         monkeypatch.setattr(agent, "attachments_mod" if name == "attachments" else name, stub)
     monkeypatch.setattr(main, "catalog", stubs["catalog"])
     monkeypatch.setattr(main, "attachments", stubs["attachments"])
+    monkeypatch.setattr(hybrid_search, "catalog", stubs["catalog"])
+    monkeypatch.setattr(hybrid_search, "available", lambda: False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
     monkeypatch.setattr(config, "LLM_PROVIDER", "anthropic")
@@ -146,6 +148,22 @@ def test_search_and_product(client):
     assert body["detail"]["properties"] == {"Номинальный ток": "160 А"}
     assert body["certificates"] == []
     assert client.get("/api/products/999999").status_code == 404
+
+
+def test_search_keeps_hybrid_relevance_order(client, monkeypatch):
+    second = {**PRODUCT, "id": 2, "name": "Похожий товар"}
+
+    async def ranked_rows(*_args, **_kwargs):
+        return [PRODUCT, second]
+
+    async def cards(rows):
+        return [{**_card(row), "in_stock": row["id"] == 2} for row in rows]
+
+    monkeypatch.setattr(hybrid_search, "search", ranked_rows)
+    monkeypatch.setattr(main.catalog, "product_cards", cards)
+    response = client.get("/api/products/search", params={"q": "автомат", "limit": 2})
+    assert response.status_code == 200
+    assert [row["id"] for row in response.json()["products"]] == [PRODUCT["id"], 2]
 
 
 def test_synthetic_certificate_page_is_gone(client):

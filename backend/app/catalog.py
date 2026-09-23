@@ -315,6 +315,42 @@ def _fts_search(match: str, limit: int, filt: tuple[str, list[Any]]) -> list[dic
         return []
 
 
+def fts_scored(query: str, limit: int = 100, *, category: str | None = None,
+               brand: str | None = None, exclude_id: int | None = None) -> list[dict[str, Any]]:
+    """FTS5 candidates with their raw BM25 rank (smaller/negative is better).
+
+    Use one OR expression so all returned BM25 values are comparable. This is a
+    recall-oriented candidate source for hybrid ranking, not the legacy search order.
+    """
+    tokens, _ = query_tokens(query)
+    if not brand:
+        detected, rest = _query_brand(tokens)
+        if detected and rest:
+            brand, tokens = detected, rest
+    if not tokens:
+        return []
+    match = " OR ".join(_fts_terms(tokens))
+    return _fts_search(match, max(1, limit), _filters(category, brand, exclude_id))
+
+
+def filtered_product_ids(*, category: str | None = None, brand: str | None = None,
+                         exclude_id: int | None = None) -> set[int] | None:
+    """IDs eligible for a filtered semantic search; None means all catalog IDs."""
+    if not any((category, brand, exclude_id is not None)):
+        return None
+    fsql, params = _filters(category, brand, exclude_id)
+    return {int(row[0]) for row in _connect().execute(f"SELECT p.id FROM products p WHERE 1=1{fsql}", params)}
+
+
+def products_by_ids(ids: list[int]) -> dict[int, dict[str, Any]]:
+    """Fetch product rows for a small union of ranked candidate IDs."""
+    if not ids:
+        return {}
+    marks = ",".join("?" for _ in ids)
+    rows = _rows(f"SELECT {_ROW_COLS} FROM products WHERE id IN ({marks})", ids)
+    return {int(row["id"]): row for row in rows}
+
+
 def _tri_search(needles: list[str], limit: int, filt: tuple[str, list[Any]]) -> list[dict[str, Any]]:
     """Substring match via the trigram index: every needle (>=3 chars) must occur in search_text."""
     needles = [n for n in needles if len(n) >= 3]

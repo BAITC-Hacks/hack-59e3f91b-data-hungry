@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import agent, attachments, catalog, config, ekt_api, recognition, upload_jobs
+from . import agent, attachments, catalog, config, ekt_api, hybrid_search, recognition, upload_jobs
 from .cart import PendingActionError, cart_store
 from .schemas import (
     Cart,
@@ -241,11 +241,8 @@ async def products_search(q: str = "", limit: int = 10) -> Any:
     if not q:
         return {"products": []}
     limit = max(1, min(limit, 20))
-    found = catalog.get_by_article(q)
-    seen = {p["id"] for p in found}
-    found += [p for p in catalog.search(q, limit=limit * 2) if p["id"] not in seen]
-    cards = await catalog.product_cards(found[: limit * 2])
-    return {"products": agent.rank_in_stock_first(cards)[:limit]}
+    found = await hybrid_search.search(q, limit=limit)
+    return {"products": await catalog.product_cards(found)}
 
 
 @app.get("/api/products/{product_id}", response_model=ProductDetailResponse)

@@ -15,6 +15,10 @@ backend/.venv/
 backend/data/catalog.sqlite
 backend/data/catalog.sqlite-journal
 backend/data/catalog.building
+backend/data/semantic_catalog.sqlite
+backend/data/semantic_catalog.sqlite-*
+backend/data/semantic_*.evaluation.json
+backend/data/semantic_benchmark/
 backend/data/dump/
 backend/data/uploads/
 backend/data/attachments.sqlite3
