@@ -38,7 +38,7 @@ CATALOG_DB = ROOT / "backend/data/catalog.sqlite"
 DEFAULT_DB = ROOT / "backend/data/semantic_catalog.sqlite"
 BENCH_DIR = ROOT / "backend/data/semantic_benchmark"
 QRELS = ROOT / "backend/tests/fixtures/semantic_queries.json"
-API_URL = os.getenv("NITEC_BASE_URL", "https://llm.nitec.kz/v1/").rstrip("/") + "/embeddings"
+API_URL = (os.getenv("EKT_EMBEDDING_BASE_URL") or os.getenv("NITEC_BASE_URL", "https://llm.nitec.kz/v1/")).rstrip("/") + "/embeddings"
 MODELS = (
     "BAAI/bge-m3",
     "intfloat/multilingual-e5-large-instruct",
@@ -324,11 +324,11 @@ def evaluate(path: Path, qrels: list[dict[str, Any]], client: EmbeddingClient) -
 
 
 def api_key() -> str:
-    key = os.getenv("NITEC_API_KEY")
+    key = os.getenv("EKT_EMBEDDING_API_KEY") or os.getenv("NITEC_API_KEY")
     if not key:
-        key = getpass.getpass("NITEC API key: ")
+        key = getpass.getpass("Embedding API key: ")
     if not key:
-        raise ValueError("NITEC_API_KEY is required")
+        raise ValueError("EKT_EMBEDDING_API_KEY is required")
     return key
 
 
