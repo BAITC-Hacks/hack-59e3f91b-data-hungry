@@ -1,9 +1,9 @@
-"""Hybrid EKT product retrieval: local FTS5 BM25 + NITEC query embeddings.
+"""Hybrid EKT product retrieval: local FTS5 BM25 + query embeddings.
 
 The vector collection is built offline by scripts/semantic_catalog.py. Query
-vectors are requested only when both the collection and NITEC_API_KEY exist;
-otherwise the existing lexical search stays available. No API key is stored in
-the collection or in search results.
+vectors use the configured local or NITEC endpoint when the collection exists;
+otherwise lexical search stays available. No API key is stored in the
+collection or in search results.
 """
 from __future__ import annotations
 
@@ -221,7 +221,7 @@ def _rerank_documents(product_ids: list[int]) -> dict[int, str]:
 
 async def rerank_hits(query: str, hits: list[dict[str, Any]], *, model: str | None = None,
                       top_k: int = RERANK_CANDIDATES) -> list[dict[str, Any]]:
-    """Call NITEC once to rerank the merged top-K; retain the hybrid tail."""
+    """Call the configured reranker once on merged top-K; retain the hybrid tail."""
     count = min(len(hits), max(1, top_k))
     if count < 2:
         return hits

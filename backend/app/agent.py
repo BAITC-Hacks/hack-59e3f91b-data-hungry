@@ -431,6 +431,17 @@ def _dump(obj: Any) -> str:
     return json.dumps(obj, ensure_ascii=False, default=str)
 
 
+def match_explicit_ip(query: str, products: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Prefer exact protection class over nearby reranked alternatives."""
+    codes = set(re.findall(r"(?<!\w)IP\s*(\d{2})(?!\d)", query, re.IGNORECASE))
+    if len(codes) != 1:
+        return products
+    code = next(iter(codes))
+    exact = [product for product in products if re.search(
+        rf"(?<!\w)IP\s*{code}(?!\d)", product.get("name") or "", re.IGNORECASE)]
+    return exact or products
+
+
 async def _tool_search_products(inp: dict[str, Any], state: TurnState) -> str:
     query = str(inp.get("query") or "").strip()
     if not query:
@@ -438,6 +449,10 @@ async def _tool_search_products(inp: dict[str, Any], state: TurnState) -> str:
     limit = max(1, min(int(inp.get("limit") or 5), 10))
     found = await hybrid_search.search(query, limit=limit, brand=inp.get("brand") or None,
                                        category=inp.get("category") or None)
+    # The reranker may include nearby alternatives (e.g. IP65 for IP54).
+    # When at least one exact protection class exists, only show that class
+    # in the product cards; otherwise leave alternatives available.
+    found = match_explicit_ip(query, found)
     if not found:
         return _dump({"results": [], "hint": "Ничего не найдено. Попробуй другой запрос (без бренда, по ключевым словам) или эскалацию."})
     cards = await catalog.product_cards(found)

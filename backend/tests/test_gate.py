@@ -79,6 +79,12 @@ def test_unmatched_tokens_hint() -> None:
     assert agent.unmatched_query_tokens("автомат legrand c16", cards) == []
 
 
+def test_exact_ip_cards_do_not_include_nearby_protection_classes() -> None:
+    products = [{"name": "Светильник 18W IP65"}, {"name": "Светильник 18W IP54"}]
+    assert agent.match_explicit_ip("светильник 18 Вт IP54", products) == products[1:]
+    assert agent.match_explicit_ip("светильник IP44", products) == products  # alternatives remain when exact is absent
+
+
 def test_user_content_is_delimited() -> None:
     class Att:
         filename = 'spec"<evil>.xlsx' + "x" * 200
