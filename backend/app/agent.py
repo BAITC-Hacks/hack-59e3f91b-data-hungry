@@ -4,7 +4,7 @@ Public entry points:
     chat(session, message, attachments, page_url, lang) -> ChatResponse dict
     render_confirmation(result, lang) -> reply text after cart_store.confirm
     record_exchange(session, user_text, assistant_text) -> keep the LLM history in sync with button clicks
-    llm_configured() -> whether an Anthropic credential is present
+    llm_configured() -> whether the active provider has a credential
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import anthropic
+import openai
 
 from . import agent_openai, agent_sdk, analogs, attachments as attachments_mod, catalog, certificates, config, ekt_api, knowledge
 from .cart import PendingActionError, cart_store
@@ -255,10 +256,25 @@ def classify_confirmation(message: str, pending: dict[str, Any]) -> str | None:
 
 # widget button template «Добавь в корзину: <name> (id 515291), 1 шт»; anchored to '(id N)' so matching stays linear
 DIRECT_ADD_RE = re.compile(r"\(id\s*[:#]?\s*(\d+)\)[^\n\d]{0,40}?(\d+)\s*(?:шт|дана|pcs)", re.IGNORECASE)
+CART_REQUEST_RE = re.compile(
+    r"\b(?:добав(?:ь|ить|ьте|ляй)|полож(?:и|ить|ите)|куп(?:ить|лю)|закаж(?:и|ите|у|ем)|"
+    r"қос(?:ыңыз|у|амын)?|add|buy|order)\b", re.IGNORECASE,
+)
+CART_NEGATION_RE = re.compile(
+    r"\b(?:не|без|жоқ|not|don'?t)\b.{0,40}\b(?:добав(?:ь|ить|ьте|ляй)|полож(?:и|ить)|"
+    r"куп(?:ить|лю)|закаж(?:и|ите|у)|қос(?:ыңыз|у)?|add|buy|order)\b", re.IGNORECASE | re.DOTALL,
+)
+
+
+def customer_requested_cart_action(message: str) -> bool:
+    """Conservative authorization for an LLM-generated cart proposal (never cart mutation)."""
+    return bool(CART_REQUEST_RE.search(message)) and not bool(CART_NEGATION_RE.search(message))
 
 
 def parse_direct_add(message: str) -> list[dict[str, int]]:
     """Parse the widget's button message «Добавь <name> (id 515291) — 2 шт» into propose() items (no LLM needed)."""
+    if not customer_requested_cart_action(message):
+        return []
     return [{"product_id": int(pid), "qty": int(qty)} for pid, qty in DIRECT_ADD_RE.findall(message)]
 
 
@@ -307,6 +323,8 @@ def record_exchange(session: Session, user_text: str, assistant_text: str) -> No
     """Append a plain user/assistant pair to the LLM history (used for button-driven confirm/reject)."""
     session.messages.append({"role": "user", "content": [{"type": "text", "text": user_text}]})
     session.messages.append({"role": "assistant", "content": [{"type": "text", "text": assistant_text}]})
+    session.sgr_messages.extend([{"role": "user", "content": user_text}, {"role": "assistant", "content": assistant_text}])
+    session.sgr_messages = session.sgr_messages[-16:]
     _trim_history(session)
 
 
@@ -318,8 +336,10 @@ def _anthropic_configured() -> bool:
 
 
 def llm_provider() -> str | None:
-    """Resolve the active LLM backend: 'anthropic', 'claude_code' or None when nothing is configured."""
+    """Resolve the configured LLM backend, including the SGR tool-calling agent."""
     p = config.LLM_PROVIDER
+    if p == "sgr":
+        return p if os.getenv("OPENAI_API_KEY") else None
     if p == "anthropic":
         return p if _anthropic_configured() else None
     if p == "claude_code":
@@ -338,6 +358,8 @@ def llm_provider() -> str | None:
 def effective_model() -> str:
     """Model name actually used by the active provider (for logs and /api/health)."""
     p = llm_provider()
+    if p == "sgr" or config.LLM_PROVIDER == "sgr":
+        return os.getenv("SGR_CHAT_MODEL", "gpt-4.1-mini")
     if p == "openai":
         return (agent_openai.settings() or {}).get("model", "?")
     if p == "claude_code":
@@ -345,8 +367,11 @@ def effective_model() -> str:
     return config.LLM_MODEL
 
 
+active_model = effective_model  # name used by the SGR integration
+
+
 def llm_configured() -> bool:
-    """Whether any LLM backend can authenticate (Anthropic API key or Claude Code login/token)."""
+    """Whether the active LLM backend can authenticate (API key, Claude Code login/token or OPENAI_API_KEY for sgr)."""
     return llm_provider() is not None
 
 
@@ -385,7 +410,7 @@ def _card_for_llm(card: dict[str, Any], *, full: bool = False) -> dict[str, Any]
     """Compact card for tool results: keeps what the model needs, drops the long tail."""
     out: dict[str, Any] = {
         k: card.get(k)
-        for k in ("id", "name", "article", "brand", "price", "quantity", "in_stock", "stock_status", "url", "kratnost")
+        for k in ("id", "name", "article", "brand", "price", "quantity", "in_stock", "stock_status", "stock_note", "url", "kratnost")
     }
     stores = [f"{s.get('name')}: {s.get('quantity')} шт" for s in card.get("stores") or [] if int(s.get("quantity") or 0) > 0]
     if stores:
@@ -395,9 +420,18 @@ def _card_for_llm(card: dict[str, Any], *, full: bool = False) -> dict[str, Any]
     props = card.get("properties") or {}
     if props:
         out["properties"] = dict(list(props.items())[: 30 if full else 12])
-    certs = card.get("certificates") or []
+        nominal = str(props.get("Номинальный ток") or "")
+        title_current = re.search(r"(?<!\w)(\d+(?:[.,]\d+)?)\s*[AА](?!\w)", str(card.get("name") or ""), re.IGNORECASE)
+        detail_current = re.search(r"(\d+(?:[.,]\d+)?)", nominal)
+        if title_current and detail_current and title_current.group(1).replace(",", ".") != detail_current.group(1).replace(",", "."):
+            out["data_conflict"] = (f"В названии указан ток {title_current.group(1)} А, "
+                                    f"в характеристике «Номинальный ток» — {detail_current.group(1)} А. "
+                                    "Не выбирай одно значение без проверки у менеджера.")
+    certs = [c for c in (card.get("certificates") or []) if not c.get("demo")]
     if certs:
         out["certificates"] = [{k: c.get(k) for k in ("title", "number", "valid_until", "url") if c.get(k)} for c in certs]
+    elif any(c.get("demo") for c in (card.get("certificates") or [])):
+        out["certificates_demo_only"] = True
     if full and card.get("description"):
         out["description"] = str(card["description"])[:600]
     return out
@@ -439,6 +473,11 @@ async def _tool_search_products(inp: dict[str, Any], state: TurnState) -> str:
             f"В названиях/артикулах найденных товаров нет: {', '.join(unmatched)} — точного совпадения нет, "
             "показаны ближайшие позиции; скажи об этом клиенту и не выдавай их за запрошенный товар."
         )
+    unavailable = bool(cards) and all(c["stock_status"] == "unknown" for c in cards)
+    if unavailable:
+        payload["upstream_unavailable"] = True
+        payload["hint"] = (payload.get("hint", "") + " EKT API недоступен: не повторяй поиск, "
+                           "не называй актуальные цену/остаток, предложи менеджера.").strip()
     return _dump(payload)
 
 
@@ -478,7 +517,11 @@ async def _tool_get_product(inp: dict[str, Any], state: TurnState) -> str:
         card = await catalog.product_card(product, detail, with_detail=False)
         cards.append(with_certificates(card, detail))
     state.add_products(cards)
-    return _dump({"found": True, "products": [_card_for_llm(c, full=True) for c in cards]})
+    unavailable = bool(cards) and all(c["stock_status"] == "unknown" for c in cards)
+    return _dump({"found": True, "products": [_card_for_llm(c, full=True) for c in cards],
+                  "upstream_unavailable": unavailable,
+                  "hint": ("EKT API недоступен: не повторяй поиск этого товара, не называй цену/остаток, "
+                           "сообщи, что проверить наличие сейчас нельзя, и предложи менеджера.") if unavailable else None})
 
 
 async def _tool_find_analogs(inp: dict[str, Any], state: TurnState) -> str:
@@ -647,7 +690,29 @@ def _user_content(message: str, attachments: list[Any], context: str) -> list[di
 
 
 def _response(session: Session, reply: str, state: TurnState | None, *, cart_updated: bool, t0: float) -> dict[str, Any]:
+    original_reply = reply
     products = (state.products if state else [])[:MAX_PRODUCTS]
+    if products:
+        conflicts = []
+        for card in products:
+            conflict = _card_for_llm(card).get("data_conflict")
+            if conflict:
+                conflicts.append(f"{card.get('article') or card.get('id')}: {conflict}")
+        caveats = []
+        if conflicts:
+            caveats.append("Противоречие в данных EKT — " + "; ".join(conflicts[:2]))
+        if any(c.get("stock_status") == "unknown" and not c.get("properties") for c in products):
+            caveats.append("при недоступности детальной карточки характеристики из названия товара не подтверждены")
+        stale_notes = [str(c["stock_note"]) for c in products if c.get("stock_note")]
+        if stale_notes and not any(note in reply for note in stale_notes):
+            caveats.append("остатки и цены не подтверждены сейчас: " + "; ".join(dict.fromkeys(stale_notes[:2])))
+        if caveats:
+            if session.lang == "kk":
+                reply = reply.rstrip() + "\n\n**Маңызды:** Тауар деректерінде қайшылық бар немесе толық карточка қолжетімсіз; сипаттамаларды менеджерден нақтылаңыз."
+            else:
+                reply = reply.rstrip() + "\n\n**Важно:** " + ". ".join(c.rstrip(".") for c in caveats) + "."
+        if reply != original_reply and session.sgr_messages and session.sgr_messages[-1] == {"role": "assistant", "content": original_reply}:
+            session.sgr_messages[-1]["content"] = reply
     if products:
         session.last_products = products
     return {
@@ -715,24 +780,46 @@ async def chat(session: Session, message: str, attachments: list[Any], page_url:
 
     state = TurnState(session=session)
 
-    # (b) no credential: keep the button-driven add flow working, explain the rest
-    if not llm_configured():
-        direct = parse_direct_add(message)
-        if direct:
-            try:
-                action = await cart_store.propose(sid, direct)
-                items = ", ".join(f"{i['name']} — {i['qty']} шт (в наличии {i['max_qty']})" for i in action["items"])
-                reply = f"Подтвердите: добавить {items}?"
-            except ValueError as exc:
-                reply = str(exc)
-        else:
-            reply = NO_KEY_REPLY[lang]
+    # (b) widget's "В корзину" is a deterministic backend action, never an LLM/tool call.
+    direct = parse_direct_add(message)
+    if direct:
+        try:
+            action = await cart_store.propose(sid, direct)
+            items = ", ".join(f"{i['name']} — {i['qty']} шт (в наличии {i['max_qty']})" for i in action["items"])
+            reply = f"Подтвердите: добавить {items}?"
+        except ValueError as exc:
+            reply = str(exc)
         record_exchange(session, message, reply)
         return _response(session, reply, state, cart_updated=False, t0=t0)
 
-    # (c) LLM tool loop
+    # (c) no credential: explain why free-form dialogue is unavailable.
+    if not llm_configured():
+        reply = ("LLM-ассистент пока не настроен: добавьте OPENAI_API_KEY в backend/.env."
+                 if config.LLM_PROVIDER == "sgr" else NO_KEY_REPLY[lang])
+        record_exchange(session, message, reply)
+        return _response(session, reply, state, cart_updated=False, t0=t0)
+
+    # (d) SGR: forced reasoning/action tools, with the existing deterministic cart gate.
     context = _context_block(session, lang, page_url or session.page_url, pending)
     provider = llm_provider()
+    if provider == "sgr":
+        from . import sgr_chat
+
+        try:
+            reply = await sgr_chat.run_turn(session, message, attachments, context, state)
+            record_exchange(session, message, reply)
+        except openai.AuthenticationError:
+            reply = "Ключ OpenAI API не принят сервером. Проверьте OPENAI_API_KEY."
+        except openai.RateLimitError:
+            reply = "Лимит OpenAI API исчерпан или сервис занят. Попробуйте позже."
+        except (openai.APIConnectionError, openai.APIStatusError, TimeoutError) as exc:
+            log.warning("OpenAI API error: %s", type(exc).__name__)
+            reply = "Не удалось связаться с AI-сервисом. Попробуйте ещё раз или свяжитесь с менеджером: " + MANAGER_CONTACTS["phone"]
+        except Exception:
+            log.exception("SGR chat turn failed")
+            reply = "Произошла внутренняя ошибка. Попробуйте ещё раз или позвоните менеджеру: " + MANAGER_CONTACTS["phone"]
+        return _response(session, reply, state, cart_updated=False, t0=t0)
+
     if provider in ("claude_code", "openai"):
         parts = [context] + [_wrap_attachment(a) for a in attachments]
         parts.append("Сообщение пользователя:\n" + (message.strip() or ("Посмотри вложение." if attachments else "(пустое сообщение)")))

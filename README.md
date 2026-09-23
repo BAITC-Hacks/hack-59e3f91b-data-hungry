@@ -80,9 +80,10 @@ Must-have кейса одной строкой: артикул → остато�
 | `anthropic` | `ANTHROPIC_API_KEY` (также `ANTHROPIC_AUTH_TOKEN` или профиль в `~/.config/anthropic`) | `LLM_MODEL` (по умолчанию `claude-opus-5`), `LLM_EFFORT` (`low`), `LLM_MAX_TOKENS` 4096, `LLM_FALLBACKS`; фото уходит модели как изображение |
 | `openai` | `OPENAI_API_KEY` → api.openai.com (`gpt-4.1`) или `NITEC_API_KEY` → https://llm.nitec.kz/v1 (`openai/gpt-oss-120b`) | `OPENAI_BASE_URL`, `OPENAI_MODEL`; function calling с теми же инструментами (`agent_openai.py`); фото — только через OCR |
 | `claude_code` | Claude Agent SDK: `CLAUDE_CODE_OAUTH_TOKEN` из `claude setup-token` или локальный `claude login` | встроенные инструменты SDK отключены, наши 7 подключены как MCP-сервер; сессия SDK продолжается между ходами (`agent_sdk.py`) |
+| `sgr` (opt-in) | `OPENAI_API_KEY` → OpenAI Chat Completions | агент на [sgr-agent-core](https://github.com/vamplabAI/sgr-agent-core): на каждом шаге принудительный структурированный `reasoning_tool`, затем ровно один action tool, финал — `answer_customer`; `SGR_CHAT_MODEL` (`gpt-4.1-mini`), `SGR_CHAT_TIMEOUT` (55 с), `SGR_CHAT_MAX_TOKENS`; те же серверные обработчики инструментов (`sgr_chat.py`, подробнее в [docs/SGR_AGENT.md](docs/SGR_AGENT.md)) |
 
-`LLM_PROVIDER=auto` (по умолчанию) выбирает в порядке anthropic → openai → claude_code. Системный промпт, инструменты и шлюз
-подтверждения общие для всех трёх бэкендов. **Без единого ключа** `/api/chat` отвечает уведомлением, что LLM не настроен, а поиск
+`LLM_PROVIDER=auto` (по умолчанию) выбирает в порядке anthropic → openai → claude_code; `sgr` включается только явно
+(`LLM_PROVIDER=sgr`). Системный промпт, инструменты и шлюз подтверждения общие для всех бэкендов. **Без единого ключа** `/api/chat` отвечает уведомлением, что LLM не настроен, а поиск
 и карточки (`/api/products/search`, `/api/products/{id}`), загрузка файлов, кнопка «Добавить в корзину» → предложение →
 «Подтвердить»/«да, добавь» с ограничением по остатку и страница корзины продолжают работать.
 
@@ -245,14 +246,15 @@ ekt.kz не проверялся.
 ## 8. Структура репозитория и команда
 
 ```text
-backend/app/     main.py (маршруты) · agent.py (tool use, шлюз подтверждения) · agent_openai.py · agent_sdk.py · cart.py ·
-                 sessions.py · catalog.py (FTS5) · analogs.py · knowledge.py · certificates.py · ekt_api.py · attachments.py
-                 (+ extractor/ocr/openai_media/transcription/recognition/attachment_cache) · schemas.py · config.py · templates/
+backend/app/     main.py (маршруты) · agent.py (tool use, шлюз подтверждения) · agent_openai.py · agent_sdk.py · sgr_chat.py ·
+                 cart.py · sessions.py · catalog.py (FTS5) · analogs.py · knowledge.py · certificates.py · ekt_api.py ·
+                 attachments.py (+ extractor/ocr/openai_media/transcription/recognition/attachment_cache) · upload_jobs.py
+                 (асинхронное распознавание, /api/upload/jobs) · schemas.py · config.py · templates/
 backend/scripts/ dump_catalog.py (выгрузка списка) · build_index.py (SQLite FTS5) · import_details.py (снимок detail)
 backend/data/    knowledge/ · certificates.json · catalog.sqlite, dump/, uploads/, attachments.sqlite3 (генерируются, в .gitignore)
-backend/tests/   117 тестов: API, шлюз подтверждения, корзина, каталог, база знаний, вложения, кэш распознавания
+backend/tests/   128 тестов: API, шлюз подтверждения, корзина, каталог, база знаний, вложения, кэш распознавания, SGR-агент, задачи распознавания
 widget/          widget.js · demo/index.html · bookmarklet.js · README.md
-docs/            API_CONTRACT.md · FRONTEND.md · DESIGN.md · VM.md · design/logo.svg
+docs/            API_CONTRACT.md · SGR_AGENT.md · FRONTEND.md · DESIGN.md · VM.md · design/logo.svg
 deploy/          push_to_vm.sh · vm_setup.sh · vm_run.sh · vm_caddy.sh · README.md
 scripts/, reports/  аудит каталога (этап 0) и отчёт ekt_catalog_audit.md
 ```
@@ -260,3 +262,80 @@ scripts/, reports/  аудит каталога (этап 0) и отчёт ekt_c
 Команда **Data Hungry**, Hackalem AI. Репозиторий: https://github.com/BAITC-Hacks/hack-59e3f91b-data-hungry. Разделение работы:
 бэкенд, агент, корзина и виджет; аудит каталога и слой вложений/OCR (этап 0, `scripts/`, `reports/`, `attachments.py`).
 Состав команды и роли будут дополнены перед сдачей.
+
+## 9. Краткое описание прототипа (SGR-агент и асинхронное распознавание файлов)
+
+Прототип чат-консультанта для покупателей электротехнической продукции ekt.kz (кейс ТОО «Электрокомплект» на HACKALEM AI). Он ищет товары, показывает характеристики и наличие, предлагает аналоги, отвечает на вопросы об условиях покупки и помогает собрать корзину. Изменение корзины требует явного подтверждения клиента.
+
+### Что реализовано
+
+- Поиск по артикулу, названию и фрагментам описания через локальный индекс SQLite FTS5; карточки товара и аналоги с обоснованием.
+- Получение детальной карточки, цены и остатков по складам из API ekt.kz. При недоступности API может показываться датированный локальный снимок; подтверждение корзины всегда требует нового ответа API.
+- База знаний по оплате, доставке, возврату и контактам на основе страниц ekt.kz.
+- Загрузка фото, аудио, Excel, Word и PDF. Локальные парсеры извлекают текст Office/PDF, OpenAI обрабатывает изображения и аудио; Chandra OCR и Whisper через NITEC доступны как опция. Результат кэшируется по SHA-256 файла и версии обработчика.
+- Асинхронная загрузка вложений в виджете: видны этапы распознавания, отправка в чат доступна после готовности текста.
+- Агент на `sgr-agent-core` с OpenAI tool calling, а также альтернативные провайдеры; серверный шлюз подтверждения отделяет предложение добавить товар от изменения корзины.
+- Встраиваемый виджет для десктопа и мобильного браузера, локальная страница демо и лаборатория распознавания файлов.
+
+### Пользовательский сценарий
+
+Покупатель пишет артикул или прикладывает спецификацию. Бэкенд извлекает текст вложения, ищет позиции в индексе и получает детали товара. Агент отвечает с карточками и источниками; если позиции нет, ищет аналоги. По просьбе покупателя создаётся **предложение** добавить найденные позиции. Только после кнопки «Подтвердить» или однозначного текстового согласия сервер повторно проверяет остаток и меняет корзину, затем возвращает ссылку на неё.
+
+### Архитектура и технологии
+
+```text
+widget/widget.js (Shadow DOM, RU/KZ)
+  → FastAPI: backend/app/main.py
+    ├─ upload_jobs.py → attachments.py / recognition.py → SQLite-кэш вложений
+    ├─ agent.py → sgr_chat.py → OpenAI function tools
+    │              ├─ catalog.py → SQLite FTS5 → ekt_api.py → ekt.kz API
+    │              ├─ analogs.py / knowledge.py / certificates.py
+    │              └─ cart.py → предложение → явное подтверждение → корзина
+    └─ альтернативные циклы: agent_openai.py / agent_sdk.py / Anthropic
+```
+
+Python 3.11+, FastAPI, SQLite/FTS5, `sgr-agent-core`, OpenAI API, httpx, LiteParse, PyMuPDF, openpyxl и python-docx. В `backend/.env.example` перечислены провайдеры и модели. Для SGR-чата по умолчанию используется `gpt-4.1-mini`, для OpenAI OCR — `gpt-5.6-luna`, для транскрибации — `gpt-transcribe`. Настройки можно менять без правки кода. Синтетический реестр сертификатов помечен **DEMO**: API партнёра не предоставляет настоящие сертификаты.
+
+### Каталог и интеграции
+
+Источник — защищённые Basic Auth API партнёра: `GET /api/products?page=N` и `GET /api/products/detail?id=ID`. Пагинация дала 15 035 уникальных товаров. Отдельный аудит запросил детальную карточку **каждого** товара: в локальной базе аудита на 23.09.2026 сохранены 15 035 деталей, ошибок детализации нет. Это не только выгрузка страниц списка. Отчёт о покрытии полей и стратегии точного/полнотекстового/семантического поиска — [reports/ekt_catalog_audit.md](reports/ekt_catalog_audit.md).
+
+Поисковый индекс строится из списка. Детальные данные запрашиваются при ответе, кэшируются и могут сохраняться как датированные снимки. Остатки из снимка не считаются текущими при подтверждении корзины. Индекс и база аудита генерируются локально и не коммитятся. Эмбеддинги в текущем поиске не используются.
+
+### Установка и запуск
+
+Нужны Python 3.11+ и [uv](https://docs.astral.sh/uv/). Из корня репозитория:
+
+```bash
+cd backend
+uv sync --locked --extra dev
+cp .env.example .env
+# В .env задайте OPENAI_API_KEY и учётные данные EKT API; не коммитьте этот файл.
+uv run python scripts/dump_catalog.py --pages 1
+uv run python scripts/build_index.py
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Для полного каталога запустите `uv run python scripts/dump_catalog.py` без `--pages`, затем повторите сборку индекса. Если уже есть база аудита `data/ekt_catalog.sqlite3`, индекс можно собрать командой `uv run python scripts/build_index.py --audit-db ../data/ekt_catalog.sqlite3`. SGR-агент включается `LLM_PROVIDER=sgr` в `.env` (по умолчанию `auto`, см. раздел 2); другие варианты описаны в [docs/SGR_AGENT.md](docs/SGR_AGENT.md). Без ключа LLM доступны поиск, загрузка файлов локальными парсерами, карточки и серверный сценарий корзины; свободный диалог недоступен.
+
+Чтобы использовать также выгруженные детальные карточки как **датированный резервный снимок** при недоступности API, запустите `uv run python scripts/import_details.py --audit-db ../data/ekt_catalog.sqlite3`. Подтверждение корзины всё равно требует живого остатка.
+
+Локальное демо: [http://127.0.0.1:8000/widget/demo/index.html](http://127.0.0.1:8000/widget/demo/index.html). Проверка распознавания файлов: задайте `ENABLE_FILE_LAB=1` и откройте [http://127.0.0.1:8000/lab](http://127.0.0.1:8000/lab); лаборатория разрешена только с loopback-адреса. OpenAPI — `/docs`, состояние — `/api/health`.
+
+### Как проверить
+
+1. В демо спросите: «Есть ли в наличии 027228 Legrand?» — ответ должен опираться на детальную карточку, показать остаток/характеристики или честно указать, если живой API недоступен.
+2. Спросите об оплате или доставке — ответ должен брать условия из базы знаний.
+3. Прикрепите файл из `backend/tests/fixtures/`, дождитесь статуса «готово», затем отправьте вопрос о его содержимом.
+4. Попросите добавить товар: до подтверждения корзина пуста; после явного подтверждения количество не превышает проверенный остаток и появляется ссылка на корзину.
+5. Автоматические проверки: `cd backend && uv run pytest -q -m 'not network'`. Тесты с меткой `network` обращаются к живому API ekt.kz.
+
+### Ограничения
+
+- В тестовом API доступно 15 035 товаров, не заявленный полный промышленный каталог. Цена и остатки меняются; датированный снимок нельзя выдавать за живые данные.
+- Сертификаты — только демонстрационный реестр, не документы партнёра. Интеграция с настоящей корзиной Bitrix на живом сайте требует отдельной проверки.
+- Сессии, предложения корзины и задачи распознавания хранятся в памяти процесса и теряются после перезапуска. Кэш вложений локальный, автоматической очистки нет; публичный стенд не предназначен для персональных документов.
+- Распознавание может ошибаться на плохих снимках и сложной верстке; старые `.doc/.xls` требуют LibreOffice. OpenAI OCR не выдаёт проверенных координат для сканов.
+- Эмбеддинговый поиск, потоковая выдача ответа и сохранение истории авторизованного пользователя пока не реализованы. Публичный стенд на VM Brev описан в статусе в начале файла.
+
+Дополнительно: [контракт API](docs/API_CONTRACT.md), [агент SGR](docs/SGR_AGENT.md), [деплой на VM](deploy/README.md), [подключение к GPU VM](docs/VM.md).

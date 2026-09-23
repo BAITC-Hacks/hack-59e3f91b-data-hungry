@@ -18,7 +18,7 @@ for _name in ("catalog", "knowledge", "analogs", "certificates", "attachments"):
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app import agent, ekt_api, main  # noqa: E402
+from app import agent, config, ekt_api, main  # noqa: E402
 
 PRODUCT = {"id": 515291, "name": "027228 АВ DRX250 MT 3ф 160А 18ka Legrand", "article": "200300285_", "price": 64920,
            "image": None, "url": "https://ekt.kz/catalog/x/027228/", "cat1": "nizkovoltnaya_apparatura", "cat2": None, "cat3": None,
@@ -104,6 +104,7 @@ def isolated(monkeypatch):
     monkeypatch.setattr(main, "attachments", stubs["attachments"])
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.setattr(config, "LLM_PROVIDER", "anthropic")
 
     async def _fetch(pid: int, *, ttl=None):
         return DETAIL if int(pid) == PRODUCT["id"] else None

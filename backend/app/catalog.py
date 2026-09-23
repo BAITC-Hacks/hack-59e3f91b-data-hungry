@@ -626,7 +626,8 @@ async def product_card(product: dict[str, Any], detail: dict[str, Any] | None = 
     props = d.get("properties") or {}
     status = stock_status(detail)
     quantity = ekt_api.total_quantity(d) if detail else None
-    price = d.get("price") if d.get("price") is not None else product.get("price")
+    # List prices are a stale snapshot. Never present one as current if live detail is unavailable.
+    price = d.get("price") if detail else None
     return {
         "id": pid,
         "name": product.get("name") or d.get("name") or "",

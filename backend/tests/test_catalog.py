@@ -121,6 +121,8 @@ def test_stock_status_and_card_offline() -> None:
     card = asyncio.run(catalog.product_card({"id": 1, "name": "Тест", "brand": None}, detail, with_detail=False))
     assert card["quantity"] == 4 and card["in_stock"] and card["stores"] == [{"name": "Алматы", "quantity": 4}]
     assert card["brand"] == "IEK" and card["reason"] is None and card["certificates"] == []
+    stale = asyncio.run(catalog.product_card({"id": 2, "name": "Тест", "price": 999}, None, with_detail=False))
+    assert stale["price"] is None and stale["stock_status"] == "unknown"
 
 
 def test_extract_specs_and_type_words() -> None:

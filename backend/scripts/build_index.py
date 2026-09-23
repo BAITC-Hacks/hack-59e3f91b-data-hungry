@@ -1,6 +1,7 @@
 """Build data/catalog.sqlite from raw list dumps (JSON pages from GET /api/products).
 
 Usage:  uv run python scripts/build_index.py --dump ../../probe/dump [--dump other/dir ...] [--limit N]
+        uv run python scripts/build_index.py --audit-db ../data/ekt_catalog.sqlite3
 Re-runnable: rebuilds the DB from scratch each time (~15k rows in a couple of seconds, 200k in well under a minute).
 Several --dump directories are merged; duplicates (same id) keep the first occurrence.
 
@@ -91,15 +92,32 @@ def load_items(dump_dirs: list[str], limit: int = 0) -> list[dict]:
     return items
 
 
+def load_audit_db(path: str, limit: int = 0) -> list[dict]:
+    """Read the local EKT ingestion audit DB without exporting raw pages to JSON."""
+    source = Path(path)
+    if not source.is_file():
+        sys.exit(f"audit DB not found: {source}")
+    con = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
+    try:
+        query = "SELECT list_json FROM products ORDER BY id" + (" LIMIT ?" if limit else "")
+        rows = con.execute(query, (limit,) if limit else ())
+        items = [json.loads(row[0]) for row in rows]
+    finally:
+        con.close()
+    print(f"read {len(items)} products from {source}")
+    return items
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dump", action="append", default=None, help="directory with list_*.json (repeatable)")
+    ap.add_argument("--audit-db", help="SQLite ingestion DB containing products.list_json")
     ap.add_argument("--db", default=str(config.DB_PATH))
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
     dump_dirs = args.dump or [os.getenv("EKT_DUMP_DIR", str(config.DATA_DIR / "dump"))]
 
-    items = load_items(dump_dirs, args.limit)
+    items = load_audit_db(args.audit_db, args.limit) if args.audit_db else load_items(dump_dirs, args.limit)
     rows = []
     for it in items:
         name = norm(it.get("name"))

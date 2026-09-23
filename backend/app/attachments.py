@@ -18,7 +18,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from . import attachment_cache, config, recognition
 
@@ -97,7 +97,8 @@ def detect_kind(filename: str, mime: str | None = None) -> str | None:
     return _KIND_BY_EXT.get(ext) or _KIND_BY_MIME.get((mime or "").split(";")[0].strip().lower())
 
 
-async def save_and_parse(filename: str, content: bytes, mime: str, session_id: str = "") -> Attachment:
+async def save_and_parse(filename: str, content: bytes, mime: str, session_id: str = "",
+                         on_progress: Callable[[str], None] | None = None) -> Attachment:
     """Store an upload and parse it (runs the parser in a worker thread).
 
     Args:
@@ -127,6 +128,8 @@ async def save_and_parse(filename: str, content: bytes, mime: str, session_id: s
     att = Attachment(id=att_id, filename=Path(safe_name).name, kind=kind, path=path, mime=mime or "",
                      sha256=digest, session_id=session_id)
     lock = _hash_locks.setdefault(f"{digest}:{kind}:{processor_signature}", asyncio.Lock())
+    if on_progress:
+        on_progress("checking_cache")
     async with lock:
         cached = await asyncio.to_thread(attachment_cache.get, digest, kind, processor_signature)
         if cached:
@@ -140,7 +143,11 @@ async def save_and_parse(filename: str, content: bytes, mime: str, session_id: s
             att.mime = cached["mime"]
             att.width, att.height = cached["width"], cached["height"]
         else:
+            if on_progress:
+                on_progress("parsing")
             await asyncio.to_thread(_store_and_parse, att, content)
+            if on_progress:
+                on_progress("recognizing")
             await _recognize(att, content)
             if att.text.strip():
                 stored_bytes = await asyncio.to_thread(att.path.read_bytes)
