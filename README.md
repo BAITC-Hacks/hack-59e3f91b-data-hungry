@@ -14,6 +14,7 @@
 - Загрузка фото, аудио, Excel, Word и PDF. Локальные парсеры извлекают текст Office/PDF, OpenAI обрабатывает изображения и аудио. Результат кэшируется по SHA-256 файла и версии обработчика.
 - Асинхронная загрузка вложений в виджете: видны этапы распознавания, отправка в чат доступна после готовности текста.
 - Агент на `sgr-agent-core` с OpenAI tool calling, а также альтернативные провайдеры; серверный шлюз подтверждения отделяет предложение добавить товар от изменения корзины.
+- Потоковый ответ SGR: текст `answer_customer` появляется по мере генерации, до него видны этапы поиска и проверки. Служебные рассуждения и аргументы других инструментов в чат не передаются.
 - Встраиваемый виджет для десктопа и мобильного браузера, локальная страница демо и лаборатория распознавания файлов.
 
 ## Пользовательский сценарий
@@ -29,13 +30,13 @@ widget/widget.js (Shadow DOM, RU/KZ)
   → FastAPI: backend/app/main.py
     ├─ upload_jobs.py → attachments.py / recognition.py → SQLite-кэш вложений
     ├─ agent.py → sgr_chat.py → OpenAI function tools
-    │              ├─ hybrid_search.py → SQLite FTS5 + NITEC embeddings → NITEC rerank → ekt_api.py
+    │              ├─ hybrid_search.py → SQLite FTS5 + E5 embeddings → Qwen3 rerank → ekt_api.py
     │              ├─ analogs.py / knowledge.py
     │              └─ cart.py → подтверждение в чате или прямой клик → корзина прототипа
     └─ альтернативные циклы: agent_openai.py / agent_sdk.py / Anthropic
 ```
 
-Python 3.11+, FastAPI, SQLite/FTS5, `sgr-agent-core`, OpenAI API, httpx, LiteParse, PyMuPDF, openpyxl и python-docx. В `backend/.env.example` перечислены провайдеры и модели. Для SGR-чата по умолчанию используется `gpt-4.1-mini`, для OpenAI OCR — `gpt-5.6-luna`, для транскрибации — `gpt-transcribe`. Настройки можно менять без правки кода. API партнёра не предоставляет подтверждённых сертификатов по товарам; ассистент предлагает запросить нужный документ у менеджера и не показывает вымышленные ссылки.
+Python 3.11+, FastAPI, SQLite/FTS5, `sgr-agent-core`, OpenAI API, httpx, LiteParse, PyMuPDF, openpyxl и python-docx. В `backend/.env.example` перечислены провайдеры и модели. Для SGR-чата по умолчанию используется `gpt-4.1-mini`, для OpenAI OCR — `gpt-5.6-luna`, для транскрибации — `gpt-transcribe`. Настройки можно менять без правки кода. API партнёра не предоставляет подтверждённых файлов сертификатов по товарам; ассистент предлагает запросить нужный документ у менеджера и не показывает вымышленные ссылки. Если карточка подтверждает соответствие ГОСТ/ТР, агент сообщает это со ссылкой на данные карточки и сохраняет область утверждения; простое упоминание стандарта не превращается в выданный сертификат.
 
 ## Каталог и интеграции
 
@@ -45,34 +46,183 @@ Python 3.11+, FastAPI, SQLite/FTS5, `sgr-agent-core`, OpenAI API, httpx, LitePar
 
 ## Установка и запуск
 
-Нужны Python 3.11+ и [uv](https://docs.astral.sh/uv/). Из корня репозитория:
+Все команды ниже выполняются **из корня репозитория**, если явно не указано иное. Нужны Python 3.12 и [uv](https://docs.astral.sh/uv/). Для чата, OCR и речи нужен доступ к OpenAI, для актуальных цен и остатков — к API ekt.kz. Для поиска выберите NITEC или собственную NVIDIA GPU: самому FastAPI GPU не требуется.
+
+### 1. Код, зависимости и ключи
 
 ```bash
-cd backend
-uv sync --locked --extra dev
-cp .env.example .env
-# В .env задайте OPENAI_API_KEY и учётные данные EKT API; не коммитьте этот файл.
-uv run python scripts/dump_catalog.py --pages 1
-uv run python scripts/build_index.py
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
+git clone https://github.com/BAITC-Hacks/hack-59e3f91b-data-hungry.git ekt-assistant
+cd ekt-assistant
+uv python install 3.12
+uv sync --project backend --locked --extra dev
+cp backend/.env.example backend/.env
+chmod 600 backend/.env
 ```
 
-Для полного каталога запустите `uv run python scripts/dump_catalog.py` без `--pages`, затем повторите сборку индекса. Если уже есть база аудита `data/ekt_catalog.sqlite3`, индекс можно собрать командой `uv run python scripts/build_index.py --audit-db ../data/ekt_catalog.sqlite3`. Пример конфигурации задаёт `LLM_PROVIDER=sgr`; другие варианты описаны в [docs/SGR_AGENT.md](docs/SGR_AGENT.md). Без ключа LLM доступны поиск, загрузка файлов локальными парсерами, карточки и серверный сценарий корзины; свободный диалог недоступен.
+При повторной установке сохраните существующий `.env`, вместо того чтобы перезаписывать его. Откройте `backend/.env` в редакторе и заполните значения:
 
-Чтобы использовать также выгруженные детальные карточки как **датированный резервный снимок** при недоступности API, запустите `uv run python scripts/import_details.py --audit-db ../data/ekt_catalog.sqlite3`. Подтверждение корзины всё равно требует живого остатка.
+```dotenv
+LLM_PROVIDER=sgr
+OPENAI_API_KEY=YOUR_OPENAI_API_KEY
+OPENAI_API_BASE_URL=https://api.openai.com/v1
+SGR_CHAT_MODEL=gpt-4.1-mini
+SGR_CHAT_MAX_TOKENS=2500
+SGR_CHAT_TIMEOUT=55
+OPENAI_OCR_MODEL=gpt-5.6-luna
+OPENAI_ASR_MODEL=gpt-transcribe
+EKT_API_USER=YOUR_EKT_API_USER
+EKT_API_PASS=YOUR_EKT_API_PASSWORD
+PUBLIC_BASE_URL=http://localhost:8000
+ENABLE_FILE_LAB=0
+```
 
-Для построения и проверки семантической коллекции из корня репозитория:
+`YOUR_…` — места для ваших значений, а не рабочие ключи. Учётные данные EKT выдаёт партнёр; без них нельзя проверить свежие остатки или подтвердить корзину. Один `OPENAI_API_KEY` используется для SGR, OCR и распознавания речи; выбранные модели должны быть доступны вашему проекту OpenAI. `.env`, загруженные файлы и базы исключены из Git. Для старых Office-форматов `.doc/.xls/.ppt` и конвертации через LiteParse дополнительно установите LibreOffice; `.xlsx/.docx/.pptx` имеют собственные парсеры.
+
+### 2. Эмбеддер и реранкер: один из двух вариантов
+
+**NITEC, без GPU на сервере.** Добавьте в `backend/.env`:
+
+```dotenv
+NITEC_API_KEY=YOUR_NITEC_API_KEY
+NITEC_API_BASE_URL=https://llm.nitec.kz/v1
+EKT_EMBEDDING_BASE_URL=https://llm.nitec.kz/v1
+EKT_RERANK_BASE_URL=https://llm.nitec.kz/v1
+NITEC_RERANK_MODEL=Qwen/Qwen3-Reranker-8B
+EKT_RERANK_ENABLED=1
+```
+
+Модель эмбеддингов записана в метаданных коллекции: для выбранного варианта это `intfloat/multilingual-e5-large-instruct`, **1024 измерения**. Бэкенд отправляет текст запроса в NITEC, ищет по локальным векторам и FTS5, затем делает один реранк объединённых кандидатов. С сервера должен быть доступен исходящий HTTPS к `llm.nitec.kz`; доступность с ноутбука не гарантирует доступность с VM.
+
+**Локальные модели на NVIDIA GPU.** На GPU-сервере заранее должны работать `nvidia-smi`, Docker и NVIDIA Container Toolkit (`docker run --gpus all`). Скрипт проверен на H200; он не устанавливает драйверы и не рассчитан на сервер без GPU. Из корня копии проекта на этой VM:
 
 ```bash
+bash deploy/vm_models.sh
+docker logs --tail 30 ekt-embed-e5
+docker logs --tail 30 ekt-rerank-qwen
+curl -fsS http://127.0.0.1:8891/v1/models
+curl -fsS http://127.0.0.1:8892/v1/models
+```
+
+Дождитесь загрузки обеих моделей: первая установка скачивает образ и веса. Скрипт запускает два контейнера `vllm/vllm-openai:v0.22.1`: E5 на `127.0.0.1:8891` и Qwen3 Reranker 8B на `127.0.0.1:8892`. Кэш весов — `~/ekt-model-cache`; контейнеры имеют `--restart unless-stopped`. Для Qwen3 нужен поставляемый `deploy/qwen3_reranker.jinja`: скрипт подключает его автоматически. Этим же скриптом можно перезапустить только один контейнер через `MODEL_TARGET=embed` или `MODEL_TARGET=rerank`.
+
+В `.env` приложения на той же VM задайте:
+
+```dotenv
+EKT_EMBEDDING_BASE_URL=http://127.0.0.1:8891/v1
+EKT_RERANK_BASE_URL=http://127.0.0.1:8892/v1
+NITEC_RERANK_MODEL=Qwen/Qwen3-Reranker-8B
+EKT_RERANK_ENABLED=1
+```
+
+Локальным серверам ключ NITEC не нужен; порты моделей доступны только внутри VM. Сервисы OpenAI для SGR/OCR/речи остаются внешними. Приложение запускается через `uv`/systemd; готового Docker Compose для всего приложения в репозитории нет.
+
+### 3. Каталог, полнотекстовый индекс и векторная коллекция
+
+Это **три разных файла**:
+
+| Файл | Назначение |
+| --- | --- |
+| `data/ekt_catalog.sqlite3` | Исходная выгрузка списка и детальных карточек для построения коллекции |
+| `backend/data/catalog.sqlite` | Рабочий каталог, FTS5 и импортированные датированные детали |
+| `backend/data/semantic_catalog.sqlite` | Тексты фрагментов и векторы E5, используемые приложением |
+
+Они не входят в `git clone`. Перенесите готовые базы из доверенной копии проекта либо создайте их. Для полной исходной выгрузки:
+
+```bash
+uv run --project backend python scripts/ekt_catalog_audit.py --db data/ekt_catalog.sqlite3
+uv run --project backend python backend/scripts/build_index.py --audit-db data/ekt_catalog.sqlite3
+uv run --project backend python backend/scripts/import_details.py --audit-db data/ekt_catalog.sqlite3
+```
+
+Первый скрипт запрашивает EKT-логин и скрыто пароль; он **не читает `backend/.env`**, а для неинтерактивного запуска использует `EKT_API_USER` и `EKT_API_PASSWORD` (у приложения пароль называется `EKT_API_PASS`). Полная выгрузка деталей занимает время, прогресс сохраняется в SQLite; после прерывания можно повторить команду. `import_details.py` нужен для резервных снимков; подтверждение корзины всё равно проверяет живой API. Повторная сборка `build_index.py` заменяет рабочую базу: после неё снова импортируйте детали.
+
+Для быстрой проверки только каталога/FTS5 можно вместо полного аудита скачать одну страницу:
+
+```bash
+uv run --project backend python backend/scripts/dump_catalog.py --pages 1
+uv run --project backend python backend/scripts/build_index.py
+```
+
+Это не создаёт полную базу аудита и не строит эмбеддинги. Для следующего шага нужен `data/ekt_catalog.sqlite3` с тем же набором товаров, что и рабочий каталог.
+
+Построение коллекции **через NITEC**:
+
+```bash
+NITEC_BASE_URL=https://llm.nitec.kz/v1 \
 uv run --project backend python backend/scripts/semantic_catalog.py build \
   --model intfloat/multilingual-e5-large-instruct --strategy full --evaluate
-uv run --project backend python backend/scripts/semantic_catalog.py search \
-  'светильник для подъезда с датчиком движения'
 ```
 
-Скрипт запросит ключ NITEC скрыто в терминале, если `NITEC_API_KEY` не задан. Результат — `backend/data/semantic_catalog.sqlite`; сборку можно возобновить после прерывания. Сравнение моделей и стратегий: `uv run --project backend python backend/scripts/semantic_catalog.py benchmark --sample-size 2000`. Команда `uv run --project backend python backend/scripts/hybrid_search.py search 'светильник с датчиком' --rerank` показывает составляющие гибридного рейтинга и score реранкера, а `evaluate --rerank` сравнивает коэффициенты и две rerank-модели на контрольных запросах. Для NITEC задайте `NITEC_API_KEY` в окружении или в исключённом из Git `backend/.env`; для локальных моделей используйте `EKT_EMBEDDING_BASE_URL` и `EKT_RERANK_BASE_URL` (пример в [инструкции VM](deploy/README.md)). Путь к коллекции можно переопределить через `EKT_SEMANTIC_DB_PATH`, модель реранкера — через `NITEC_RERANK_MODEL`, отключить этап — через `EKT_RERANK_ENABLED=0`. Коэффициенты и метрики приведены в [отчёте](reports/ekt_semantic_benchmark.md).
+Ключ берётся из `NITEC_API_KEY` в окружении/`backend/.env` или запрашивается скрыто. У этого CLI адрес задаётся именно `NITEC_BASE_URL`; настройки приложения `EKT_EMBEDDING_BASE_URL` на сборщик не влияют.
 
-Локальное демо: [http://127.0.0.1:8000/widget/demo/index.html](http://127.0.0.1:8000/widget/demo/index.html). Проверка распознавания файлов: задайте `ENABLE_FILE_LAB=1` и откройте [http://127.0.0.1:8000/lab](http://127.0.0.1:8000/lab); лаборатория разрешена только с loopback-адреса. OpenAPI — `/docs`, состояние — `/api/health`.
+Построение **через локальный E5** на GPU-сервере:
+
+```bash
+NITEC_BASE_URL=http://127.0.0.1:8891/v1 NITEC_API_KEY=local \
+uv run --project backend python backend/scripts/semantic_catalog.py build \
+  --model intfloat/multilingual-e5-large-instruct --strategy full --evaluate
+```
+
+`local` здесь — непустое значение для CLI, а не секрет: у локального vLLM авторизация не включена. Выходной файл — `backend/data/semantic_catalog.sqlite`. Сборка возобновляется, но при смене модели, стратегии или сервера эмбеддингов используйте **новый** файл (`--db backend/data/semantic_benchmark/rebuilt.sqlite`) и после проверки задайте его абсолютный путь через `EKT_SEMANTIC_DB_PATH`. Не дописывайте в старую коллекцию векторы другой модели. Одинаковая размерность сама по себе не гарантирует совместимость; при переносе между NITEC и локальным сервером проверяйте одинаковые тексты либо пересобирайте коллекцию целиком.
+
+Проверка обеих поисковых моделей с текущим `.env`:
+
+```bash
+uv run --project backend python backend/scripts/hybrid_search.py search \
+  'светильник с датчиком движения' --rerank --limit 3
+```
+
+В выдаче должны быть числовые `cosine` и `rerank_score`, без исключений. HTTP 200 на обычном поиске этого не доказывает: при сбое модели приложение может перейти на FTS5. Сравнение стратегий `compact/full/split` и моделей: `semantic_catalog.py benchmark --sample-size 2000`; результаты предыдущих экспериментов — [в отчёте](reports/ekt_semantic_benchmark.md).
+
+### 4. Запуск приложения
+
+```bash
+uv run --project backend uvicorn --app-dir backend app.main:app \
+  --host 127.0.0.1 --port 8000 --workers 1
+```
+
+Откройте [локальное демо](http://127.0.0.1:8000/widget/demo/index.html), [OpenAPI](http://127.0.0.1:8000/docs) или [health](http://127.0.0.1:8000/api/health). Нужен **один worker**: сессии и корзины пока находятся в памяти процесса. Для локальной лаборатории распознавания задайте `ENABLE_FILE_LAB=1` и откройте [lab](http://127.0.0.1:8000/lab); на публичном сервере оставьте `0`.
+
+Потоковый чат принимает тот же JSON, что и `/api/chat`:
+
+```bash
+curl -N http://127.0.0.1:8000/api/chat/stream \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"Какие условия доставки?","lang":"ru"}'
+```
+
+SSE-события: `session`, `status`, `answer_delta`, при необходимости `answer_reset`, затем `done` с полным ответом, карточками и корзиной. Настоящие текстовые дельты доступны у SGR, работающего через OpenAI; детерминированные ответы и остальные провайдеры возвращаются целиком в `done`. Подтверждение корзины остаётся отдельным серверным действием. Одновременный запрос в занятую сессию получает `409`, пустой запрос без вложения — `400`; обычный `/api/chat` сохранён. При разрыве потока принятый запрос завершится на сервере, поэтому виджет не повторяет его автоматически.
+
+### 5. Запуск на Ubuntu с автозапуском и HTTPS
+
+Подготовьте зависимости, `.env` и базы на сервере по шагам выше. Для нового сервера с пользователем `ubuntu` и копией проекта `/home/ubuntu/ekt-assistant` можно использовать имеющийся systemd-шаблон. Из корня этой копии:
+
+```bash
+ln -s "$PWD" "$HOME/ekt-current"
+sudo cp deploy/ekt-assistant-nitec.service /etc/systemd/system/ekt-assistant.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now ekt-assistant
+curl -fsS http://127.0.0.1:8000/api/health
+sudo journalctl -u ekt-assistant -n 30 --no-pager
+```
+
+Если `ekt-current` уже существует, это действующий релиз: сначала проверьте его, не заменяйте ссылку вслепую. При другом пользователе/пути измените `User`, `WorkingDirectory`, `PATH` и `ExecStart` в unit-файле. Имя шаблона не ограничивает провайдера — URL моделей берутся из `.env`. Перед установкой убедитесь, что порт 8000 не занят предыдущим ручным запуском. Перезапуск после изменения `.env`: `sudo systemctl restart ekt-assistant`.
+
+Для публичного адреса назначьте домен серверу, обеспечьте входящие 80/443 и настройте HTTPS-прокси на `127.0.0.1:8000`. Например, блок **существующего** Caddyfile для вашего домена:
+
+```caddyfile
+demo.example.kz {
+    reverse_proxy 127.0.0.1:8000 {
+        flush_interval -1
+    }
+}
+```
+
+Если Caddy ещё не установлен, используйте [официальную инструкцию установки](https://caddyserver.com/docs/install). Настройка `flush_interval` описана в [документации потокового проксирования](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#streaming). Замените `demo.example.kz` своим доменом, проверьте конфигурацию (`sudo caddy validate --config /etc/caddy/Caddyfile`) и перезагрузите Caddy (`sudo systemctl reload caddy`). Для nginx отключите `proxy_buffering`/`proxy_cache` и поставьте достаточный `proxy_read_timeout`; пример HTTP-прокси есть в [deploy/nginx.conf](deploy/nginx.conf). TLS для этого nginx-примера настраивается отдельно. Не публикуйте порты моделей 8891/8892.
+
+После внешней проверки HTTPS задайте `PUBLIC_BASE_URL=https://ВАШ-ДОМЕН` в `.env` и перезапустите приложение: этот адрес используется в ссылках на корзину. Проверьте демо, `/api/health`, поток `/api/chat/stream` и поиск с реранком **с самого сервера**. Health подтверждает загрузку процесса, каталога и наличие настройки ключа; доступность OpenAI/NITEC проверяется реальными запросами.
+
+Для уже настроенной Brev есть [отдельный сценарий](deploy/README.md). `deploy/push_to_vm.sh` переносит только текущий **коммит** и перезаписывает удалённый `.env` локальным; векторную коллекцию нужно переносить отдельно. Не используйте этот скрипт поверх установки под systemd: его `vm_run.sh` запускает другой процесс через `nohup` и не обеспечивает автозапуск бэкенда. `catalog.sqlite` и `semantic_catalog.sqlite` переносите согласованной парой после завершения сборки, а `.env` создавайте для конкретного сервера с правами `600`.
 
 ## Как проверить
 
@@ -80,7 +230,7 @@ uv run --project backend python backend/scripts/semantic_catalog.py search \
 2. Спросите об оплате или доставке — ответ должен брать условия из базы знаний.
 3. Прикрепите файл из `backend/tests/fixtures/`, дождитесь статуса «готово», затем отправьте вопрос о его содержимом.
 4. Попросите ассистента добавить товар: до подтверждения корзина пуста; после явного подтверждения количество не превышает проверенный остаток и появляется ссылка на корзину прототипа. Отдельно нажмите «В корзину» на карточке: товар добавится сразу, без второго подтверждения.
-5. Автоматические проверки: `cd backend && uv run pytest -q -m 'not network'`. Тесты с меткой `network` обращаются к живому API ekt.kz.
+5. Автоматические проверки из корня: `uv run --project backend pytest -c backend/pyproject.toml backend/tests -q -m 'not network'` и `node --test widget/tests/*.test.cjs`. Для JS-тестов нужен Node.js, дополнительных npm-пакетов нет. Тесты с меткой `network` обращаются к живому API ekt.kz.
 
 ## Ограничения
 
@@ -88,6 +238,6 @@ uv run --project backend python backend/scripts/semantic_catalog.py search \
 - Сертификаты не доступны в каталожном API: ссылки на документы появятся только после получения и проверки данных партнёра. Корзина внешнего демо не является корзиной ekt.kz; интеграция с настоящей корзиной Bitrix на живом сайте требует размещения виджета на ekt.kz и отдельной проверки.
 - Сессии, предложения корзины и задачи распознавания хранятся в памяти процесса и теряются после перезапуска. Кэш вложений локальный, автоматической очистки нет; публичный стенд не предназначен для персональных документов.
 - Распознавание может ошибаться на плохих снимках и сложной верстке; старые `.doc/.xls` требуют LibreOffice. OpenAI OCR не выдаёт проверенных координат для сканов.
-- Гибридный поиск требует доступности сервиса эмбеддингов для каждого нового запроса и реранкера для финальной сортировки; без эмбеддингов используется локальный поиск FTS5, без реранкера — гибридный порядок. Потоковая выдача ответа и сохранение истории авторизованного пользователя пока не реализованы.
+- Гибридный поиск требует доступности сервиса эмбеддингов для каждого нового запроса и реранкера для финальной сортировки; без эмбеддингов используется локальный поиск FTS5, без реранкера — гибридный порядок. Потоковая выдача текста подключена к SGR; остальные провайдеры сохраняют обычный полный ответ. Сохранение истории авторизованного пользователя пока не реализовано.
 
 Дополнительно: [контракт API](docs/API_CONTRACT.md), [агент SGR](docs/SGR_AGENT.md), [деплой на VM](deploy/README.md), [подключение к GPU VM](docs/VM.md).
